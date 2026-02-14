@@ -1,0 +1,106 @@
+# ============================================================================
+# MASTER ANALYSIS SCRIPT
+# Runs all analyses on all simulations
+# ============================================================================
+
+# Load functions
+source("functions.R")
+
+# Load simulations
+sim1 <- read.csv("simulation1_easy_separation.csv")
+sim2 <- read.csv("simulation2_moderate_separation.csv")
+sim3 <- read.csv("simulation3_oversplit.csv")
+sim4 <- read.csv("simulation4_chronospecies.csv")
+sim5 <- read.csv("simulation5_geographic_variation.csv")
+
+# ----------------------------------------------------------------------------
+# PART 1: Core Analyses
+# ----------------------------------------------------------------------------
+
+cat("\n==========================================\n")
+cat("RUNNING CORE ANALYSES ON ALL SIMULATIONS\n")
+cat("==========================================\n")
+
+# Analyze each simulation
+results_sim1 <- analyze_simulation(sim1, "SIM1")
+results_sim2 <- analyze_simulation(sim2, "SIM2")
+results_sim3 <- analyze_simulation(sim3, "SIM3")
+results_sim4 <- analyze_simulation(sim4, "SIM4")
+results_sim5 <- analyze_simulation(sim5, "SIM5")
+
+# Compile all results
+all_results <- list(
+  SIM1 = results_sim1,
+  SIM2 = results_sim2,
+  SIM3 = results_sim3,
+  SIM4 = results_sim4,
+  SIM5 = results_sim5
+)
+
+# Generate summary table
+summary_table <- summarize_results(all_results)
+print(summary_table)
+
+# Save summary
+write.csv(summary_table, "results_summary_table.csv", row.names = FALSE)
+
+# ----------------------------------------------------------------------------
+# PART 2: Sensitivity Analyses
+# ----------------------------------------------------------------------------
+
+cat("\n==========================================\n")
+cat("RUNNING SENSITIVITY ANALYSES\n")
+cat("==========================================\n")
+
+# Sample size sensitivity (on SIM2 - realistic scenario)
+cat("\n--- Sample Size Sensitivity ---\n")
+sample_size_results <- sensitivity_sample_size(
+  sim2,
+  sample_sizes = seq(5, 25, 5),
+  n_replicates = 30
+)
+write.csv(sample_size_results, "sensitivity_sample_size.csv", row.names = FALSE)
+
+# Missing data sensitivity (on SIM2)
+cat("\n--- Missing Data Sensitivity ---\n")
+missing_data_results <- sensitivity_missing_data(
+  sim2,
+  missing_pcts = seq(0, 50, 10),
+  n_replicates = 30
+)
+write.csv(missing_data_results, "sensitivity_missing_data.csv", row.names = FALSE)
+
+# Measurement error sensitivity (on SIM2)
+cat("\n--- Measurement Error Sensitivity ---\n")
+measurement_error_results <- sensitivity_measurement_error(
+  sim2,
+  error_sds = seq(0, 1.0, 0.1),
+  n_replicates = 30
+)
+write.csv(measurement_error_results, "sensitivity_measurement_error.csv", row.names = FALSE)
+
+# ----------------------------------------------------------------------------
+# PART 3: Save All Results
+# ----------------------------------------------------------------------------
+
+cat("\n==========================================\n")
+cat("SAVING RESULTS\n")
+cat("==========================================\n")
+
+# Save complete results object
+saveRDS(all_results, "all_simulation_results.rds")
+
+# Save sensitivity results
+sensitivity_results <- list(
+  sample_size = sample_size_results,
+  missing_data = missing_data_results,
+  measurement_error = measurement_error_results
+)
+saveRDS(sensitivity_results, "sensitivity_results.rds")
+
+cat("\n=== ANALYSIS COMPLETE ===\n")
+cat("Results saved to:\n")
+cat("  - results_summary_table.csv\n")
+cat("  - all_simulation_results.rds\n")
+cat("  - sensitivity_*.csv\n")
+cat("  - sensitivity_results.rds\n")
