@@ -1,0 +1,6 @@
+"Simulation","Description","True_N_Species","N_Specimens","Expected_Accuracy","Purpose"
+"SIM1","Easy separation - positive control",3,75,">95%","Verify method works when it should"
+"SIM2","Moderate separation - realistic test",3,60,"75-85%","Test realistic Australopithecus scenario"
+"SIM3","Oversplit taxa - negative control",1,60,"<60%","Test ability to detect oversplitting"
+"SIM4","Chronospecies - temporal variation",1,75,"N/A","Test temporal modeling"
+"SIM5","Geographic variation - spatial structure",1,60,"N/A","Test geographic modeling"
