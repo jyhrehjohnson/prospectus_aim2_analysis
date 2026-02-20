@@ -1,0 +1,33 @@
+---
+title: "Complete Workflow"
+author: "Jyhreh Johnson"
+date: "2026-02-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Complete Workflow for all R.scripts
+```{r}
+# Step 1: Run master analysis
+source("hybrid_distance_master.R")
+
+# Step 2: Create taxonomy
+source("create_taxonomy_from_results.R")
+
+# Step 3: Visualize taxonomy
+source("visualize_taxonomy.R")
+
+# Step 4: Create all figures
+taxonomy_figures <- create_all_taxonomy_figures(
+  results = real_data_results,
+  taxonomic_matrix = taxonomic_matrix
+)
+
+# Step 5: View individual figures
+print(taxonomy_figures$dendrogram)
+print(taxonomy_figures$heatmap)
+print(taxonomy_figures$morphospace)
+```

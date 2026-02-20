@@ -1,0 +1,10 @@
+
+PAIRWISE DECISION MATRIX
+========================
+
+                    Species_A   Species_B   Species_C   
+--------------------------------------------------------
+Species_A           -           SYNONYMIZE  SYNONYMIZE  
+Species_B           SYNONYMIZE  -           SYNONYMIZE  
+Species_C           SYNONYMIZE  SYNONYMIZE  -           
+

@@ -1,0 +1,605 @@
+---
+title: "MG_Analysis"
+author: "Jyhreh Johnson"
+date: "2026-02-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Set seed for reproducibility
+set.seed(2024)
+```
+
+#Install Required Packages
+```{r}
+required_packages <- c(
+  "MASS",        # For mvrnorm and discriminant analysis
+  "cluster",     # For Gower's distance
+  "tidyverse",   # Data manipulation
+  "ggplot2",     # Plotting
+  "cowplot",     # Multi-panel plots
+  "viridis",     # Color palettes
+  "caret",       # Classification
+  "lme4",        # Mixed models
+  "reshape2",    # Data reshaping
+  "gridExtra"    # Plot arrangement
+)
+
+for (pkg in required_packages) {
+  if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+    cat("Installing", pkg, "...\n")
+    install.packages(pkg, repos = "https://cloud.r-project.org/")
+    library(pkg, character.only = TRUE)
+  }
+}
+```
+
+#Create Folders in Directory
+```{r}
+dir.create("data", showWarnings = FALSE)
+dir.create("results", showWarnings = FALSE)
+dir.create("figures", showWarnings = FALSE)
+```
+
+#Create Correlation Matrix
+```{r}
+cor_matrix <- matrix(c(
+  1.00, 0.75, 0.70, 0.65, 0.60,
+  0.75, 1.00, 0.65, 0.70, 0.55,
+  0.70, 0.65, 1.00, 0.75, 0.60,
+  0.65, 0.70, 0.75, 1.00, 0.55,
+  0.60, 0.55, 0.60, 0.55, 1.00
+), nrow = 5)
+
+measurement_names <- c("M1_BL", "M1_MD", "M2_BL", "M2_MD", "P4_BL")
+```
+
+
+**What this does:**
+- Defines how the 5 dental measurements correlate with each other
+- Example: M1_BL and M1_MD correlate at 0.75
+- `measurement_names` gives labels to the measurements
+
+**Why it matters:**
+- Real biological data has correlated variables (bigger teeth tend to be bigger in all dimensions)
+- This makes simulated data realistic
+- Based on actual primate dental data
+
+**Reading the matrix:**
+       M1_BL  M1_MD  M2_BL  M2_MD  P4_BL
+M1_BL  1.00   0.75   0.70   0.65   0.60
+M1_MD  0.75   1.00   0.65   0.70   0.55
+M2_BL  0.70   0.65   1.00   0.75   0.60
+M2_MD  0.65   0.70   0.75   1.00   0.55
+P4_BL  0.60   0.55   0.60   0.55   1.00
+
+#Generate Funtion: Creates a dataset of specimens with both continuous measurements and discrete traits.
+```{r}
+generate_species_mixed <- function(n, mean_vec, sd_vec, cor_mat, 
+                                  species_name, discrete_probs = NULL) {
+  
+  cov_mat <- diag(sd_vec) %*% cor_mat %*% diag(sd_vec)
+  continuous_data <- mvrnorm(n, mean_vec, cov_mat)
+  colnames(continuous_data) <- measurement_names
+  
+  df <- as.data.frame(continuous_data)
+  df$specimen_id <- paste0(species_name, "_", sprintf("%03d", 1:n))
+  df$taxon <- species_name
+  
+  #Add Discrete Characters
+  if (!is.null(discrete_probs)) { 
+  for (trait_name in names(discrete_probs)) {
+    probs <- discrete_probs[[trait_name]]
+    df[[trait_name]] <- sample(
+      names(probs), 
+      size = n, 
+      replace = TRUE, 
+      prob = probs
+    )
+    df[[trait_name]] <- factor(df[[trait_name]], levels = names(probs))
+  }
+    }
+  
+}
+```
+
+#Distance Calculation Functions: 
+Why Mahalanobis instead of Euclidean?
+-Accounts for correlations between variables
+-Scales automatically (no need for standardization)
+-More appropriate for biological data
+```{r: Mahalanobis Distance}
+calc_mahalanobis_distance <- function(data, robust = TRUE) {
+  centered <- scale(data, center = TRUE, scale = FALSE) #Center the Datat
+ 
+   S <- cov(centered) #Calculate covariance matrix; Calculates how variables                          vary together; Output is a 5×5 symmetric matrix
+  
+  #Handle Near Singular Matrices
+   if (robust) {
+  det_S <- det(S)
+  if (det_S == 0 || det_S < 1e-10) {
+    warning("Covariance matrix near-singular...")
+    S <- S + diag(0.001, ncol(S))
+  }
+  }
+  
+  #Invert Covariance Matrix
+  S_inv <- solve(S)
+  
+  #Calculate Pariwise Distance
+  n <- nrow(data)
+  D <- matrix(0, n, n)
+
+  for (i in 1:(n-1)) {
+    for (j in (i+1):n) {
+     diff <- as.numeric(data[i,] - data[j,])
+      D[i,j] <- sqrt(t(diff) %*% S_inv %*% diff)
+      D[j,i] <- D[i,j]
+    }
+  }
+  
+  #Calculate the difference vector
+  diff <- as.numeric(data[i,] - data[j,])
+  
+  #Apply Mahalanobis Formula
+  D[i,j] <- sqrt(t(diff) %*% S_inv %*% diff)
+  
+  #Mirror to lower triange
+  D[j,i] <- D[i,j]
+  
+  #Return as distance object
+  return(as.dist(D))
+  
+}
+```
+
+#Calculate Gower's Distance for DISCRETE traits ONLY (Gower, 1971)
+**How Gower's distance works for discrete variables:**
+
+For each pair of specimens and each discrete variable:
+- If values match: similarity = 1
+- If values don't match: similarity = 0
+```{r}
+calc_gower_distance_discrete <- function(data) {
+  if (ncol(data) == 0) {
+    n <- nrow(data)
+    return(as.dist(matrix(0, n, n)))
+  }
+  
+  gower_dist <- daisy(data, metric = "gower", stand = FALSE)
+  return(gower_dist)
+}
+```
+
+```{r}
+calc_hybrid_distance <- function(data, continuous_vars, discrete_vars, 
+                                alpha = 0.5, robust = TRUE, 
+                                standardize_method = "minmax") {
+  #Calculate Mahalanobis Distance
+  n <- nrow(data)
+
+  continuous_data <- data[, continuous_vars, drop = FALSE]
+  D_mahal <- as.matrix(calc_mahalanobis_distance(continuous_data, robust = robust))
+  
+  #Standardize Mahalanobis to 0-1 Range
+  if (standardize_method == "minmax") {
+  D_mahal_scaled <- D_mahal / max(D_mahal[D_mahal < Inf])
+  }
+  
+  #Z-scores
+ else if (standardize_method == "zscore") {
+  D_mahal_vec <- D_mahal[upper.tri(D_mahal)]
+  mean_d <- mean(D_mahal_vec)
+  sd_d <- sd(D_mahal_vec)
+  D_mahal_scaled <- (D_mahal - mean_d) / sd_d
+  D_mahal_scaled <- (D_mahal_scaled - min(D_mahal_scaled)) / 
+                    (max(D_mahal_scaled) - min(D_mahal_scaled))
+}
+
+#Calculate Gower's Distance for Discrete Variables
+  if (length(discrete_vars) > 0 && all(discrete_vars %in% names(data))) {
+  discrete_data <- data[, discrete_vars, drop = FALSE]
+  D_gower <- as.matrix(calc_gower_distance_discrete(discrete_data))
+ else {
+  D_gower <- matrix(0, n, n)
+  discrete_vars <- character(0)
+}
+  }
+  #Combine Distances
+  D_hybrid <- alpha * D_mahal_scaled + (1 - alpha) * D_gower
+  
+  #Calculate Diagnostics
+  diagnostics <- list(
+  n_specimens = n,
+  n_continuous = length(continuous_vars),
+  n_discrete = length(discrete_vars),
+  alpha = alpha,
+  mean_mahal = mean(D_mahal_scaled[upper.tri(D_mahal_scaled)]),
+  mean_gower = mean(D_gower[upper.tri(D_gower)]),
+  mean_hybrid = mean(D_hybrid[upper.tri(D_hybrid)])
+)
+  #Print Summary
+  cat("\nHybrid Distance Summary:\n")
+cat("  Specimens:", diagnostics$n_specimens, "\n")
+cat("  Continuous vars:", diagnostics$n_continuous, "\n")
+cat("  Discrete vars:", diagnostics$n_discrete, "\n")
+cat("  Alpha:", round(alpha, 3), "\n")
+cat("  Mean Mahalanobis:", round(diagnostics$mean_mahal, 3), "\n")
+cat("  Mean Gower:", round(diagnostics$mean_gower, 3), "\n")
+cat("  Mean hybrid:", round(diagnostics$mean_hybrid, 3), "\n")
+
+#Return Comprehensive Results
+return(list(
+  distance = as.dist(D_hybrid),
+  distance_matrix = D_hybrid,
+  mahalanobis_matrix = D_mahal_scaled,
+  gower_matrix = D_gower,
+  diagnostics = diagnostics,
+  continuous_vars = continuous_vars,
+  discrete_vars = discrete_vars,
+  alpha = alpha
+))
+}
+```
+
+Part 4: Classification Function
+```{r}
+classify_with_distance <- function(distance_matrix, taxa, k_folds = 5, 
+                                  k_neighbors = 5) {
+  #Convert to Matrix Format
+  if (inherits(distance_matrix, "dist")) {
+  dist_mat <- as.matrix(distance_matrix)
+} else {
+  dist_mat <- distance_matrix
+}
+  #Set up Cross-Validation
+  n <- nrow(dist_mat) #Count Specimens
+fold_size <- floor(n / k_folds) #Calculate fold size
+fold_ids <- sample(rep(1:k_folds, length.out = n)) #Assign specimens to folds randomly
+
+
+  #Initialize Storage
+  predictions <- rep(NA, n)
+  posterior_probs <- matrix(NA, nrow = n, ncol = length(unique(taxa)))
+  colnames(posterior_probs) <- sort(unique(taxa))
+  
+  #Cross-Validation Loop
+  for (fold in 1:k_folds) {
+  test_idx <- which(fold_ids == fold) #Identify test specimens
+  train_idx <- which(fold_ids != fold) #Identify traiting specimens
+  }
+  
+  #k-Nearest Neighbors classifcation
+  for (i in test_idx) {
+  # Get distances to training specimens
+  dists_to_train <- dist_mat[i, train_idx]
+  
+  # Find k nearest neighbors
+  nearest_idx <- order(dists_to_train)[1:min(k_neighbors, length(train_idx))]
+  nearest_taxa <- taxa[train_idx[nearest_idx]]
+  }
+  
+  #Get Species Labels of Neighbors
+  nearest_taxa <- taxa[train_idx[nearest_idx]]
+  
+  #Posterior probabilities
+  taxon_counts <- table(nearest_taxa) #Count neighbors by species
+  for (tx in names(taxon_counts)) {
+  posterior_probs[i, tx] <- taxon_counts[tx] / k_neighbors
+  } #Convert probabilites
+  
+  #Make Predictions
+  predictions[i] <- names(sort(taxon_counts, decreasing = TRUE))[1]
+  
+  #Calculate accuracy and confusion matrix
+  accuracy <- mean(predictions == taxa, na.rm = TRUE)
+  conf_mat <- table(Predicted = predictions, True = taxa)
+  mean_posterior <- mean(apply(posterior_probs, 1, max, na.rm = TRUE), na.rm = TRUE)
+  
+  #Return Results
+  return(list(
+  accuracy = accuracy,
+  predictions = predictions,
+  posterior_probs = posterior_probs,
+  confusion_matrix = conf_mat,
+  mean_confidence = mean_posterior
+))
+}
+```
+
+Part 5: Clustering Distance
+Uses clustering to find natural groups in the data, testing if the "right" number of species emerges.
+```{r}
+cluster_with_distance <- function(distance_matrix, true_k = NULL, max_k = 6) {
+  #Convert Distance to Object
+  if (inherits(distance_matrix, "dist")) {
+  dist_obj <- distance_matrix
+} else {
+  dist_obj <- as.dist(distance_matrix)
+}
+  
+  #Try Different Number of Clusters
+  silhouette_scores <- numeric(max_k - 1)
+  pam_results <- list()
+
+  for (k in 2:max_k) {
+    pam_fit <- pam(dist_obj, k = k, diss = TRUE)
+    pam_results[[k]] <- pam_fit
+    silhouette_scores[k - 1] <- pam_fit$silinfo$avg.width
+  }
+  
+  #Hierarchical clustering (for comparison)
+  hc <- hclust(dist_obj, method = "ward.D2")
+  hc_clusters <- cutree(hc, k = optimal_k)
+  
+  #Return Results
+  return(list(
+  optimal_k = optimal_k,
+  true_k = true_k,
+  silhouette_scores = silhouette_scores,
+  best_silhouette = silhouette_scores[optimal_k - 1],
+  pam_clusters = best_pam$clustering,
+  hc_clusters = hc_clusters,
+  pam_model = best_pam,
+  hc_model = hc
+))
+}
+```
+
+```{r}
+optimize_alpha <- function(data, taxa, continuous_vars, discrete_vars, 
+                          alpha_range = seq(0, 1, 0.05), k_folds = 5) {
+  results <- data.frame(
+  alpha = alpha_range,
+  accuracy = NA,
+  mean_confidence = NA
+)
+  for (i in seq_along(alpha_range)) {
+  alpha <- alpha_range[i]
+  
+  # Calculate hybrid distance with this alpha
+  hybrid <- calc_hybrid_distance(
+    data, continuous_vars, discrete_vars, 
+    alpha = alpha, robust = TRUE
+  )
+  
+  # Classify
+  classification <- classify_with_distance(
+    hybrid$distance, taxa, k_folds = k_folds
+  )
+  
+  results$accuracy[i] <- classification$accuracy
+  results$mean_confidence[i] <- classification$mean_confidence
+  }
+  
+  optimal_idx <- which.max(results$accuracy)
+  optimal_alpha <- results$alpha[optimal_idx]
+  optimal_accuracy <- results$accuracy[optimal_idx]
+  
+  return(list(
+  optimal_alpha = optimal_alpha,
+  optimal_accuracy = optimal_accuracy,
+  results = results
+))
+}
+```
+
+Temporal Variation Analysis
+```{r}
+analyze_temporal_variation <- function(sim_data, continuous_vars, 
+                                      discrete_vars, time_var = "time_ma") {
+  for (var in continuous_vars) {
+    # Model 1: Naive (ignores time)
+  formula_1 <- as.formula(paste(var, "~ taxon"))
+  model_1 <- lm(formula_1, data = sim_data)
+  # Model 2: Linear temporal trend
+  formula_2 <- as.formula(paste(var, "~", time_var))
+  model_2 <- lm(formula_2, data = sim_data)
+  formula_3 <- as.formula(paste(var, "~", time_var, "+ (1|taxon)"))
+  model_3 <- lmer(formula_3, data = sim_data, REML = TRUE)
+  
+  aic_comparison <- AIC(model_1, model_2, model_3)
+  
+  #Variance Partitioning
+  var_comps <- as.data.frame(VarCorr(model_3))
+
+  temporal_coef <- fixef(model_3)[time_var]
+
+  total_var <- sum(var_comps$vcov)
+  temporal_var_prop <- var_comps$vcov[var_comps$grp == "taxon"] / total_var
+  residual_var_prop <- var_comps$vcov[var_comps$grp == "Residual"] / total_var
+  
+  #Test Discrete Character Evolution
+  for (var in discrete_vars) {
+  if (var %in% names(sim_data)) {
+    contingency <- table(sim_data[[var]], sim_data[[time_var]])
+    chi_test <- chisq.test(contingency)
+  
+    #Return Results
+  return(list(
+  continuous = results_list,
+  mean_temporal_variance = mean_temporal_var,
+  discrete = discrete_tests
+))
+  }
+  }
+  }
+  
+}
+```
+
+Geographic Variation Analysis
+```{r}
+analyze_geographic_variation <- function(sim_data, continuous_vars, 
+                                        discrete_vars, region_var = "region") {
+  formula_3 <- as.formula(paste(var, "~ (1|", region_var, ")"))
+  model_3 <- lmer(formula_3, data = sim_data, REML = TRUE)
+  geographic_var <- var_comps$vcov[var_comps$grp == region_var]
+  residual_var <- var_comps$vcov[var_comps$grp == "Residual"]
+  icc <- geographic_var / (geographic_var + residual_var)
+}
+```
+
+```{r}
+analyze_with_hybrid <- function(sim_data, sim_name, 
+                               continuous_vars, discrete_vars,
+                               optimize_alpha_flag = TRUE,
+                               alpha_default = 0.65) {
+  # Step 1: Optimize alpha (if requested)
+if (optimize_alpha_flag) {
+  alpha_opt <- optimize_alpha(...)
+  alpha_use <- alpha_opt$optimal_alpha
+} else {
+  alpha_use <- alpha_default
+}
+
+# Step 2: Calculate hybrid distance with optimal alpha
+hybrid <- calc_hybrid_distance(...)
+
+# Step 3: Classification
+classification <- classify_with_distance(hybrid$distance, true_taxa)
+
+# Step 4: Clustering
+clustering <- cluster_with_distance(hybrid$distance, true_k = true_k)
+
+# Step 5: PCA for visualization
+pca_result <- prcomp(pca_data, scale. = TRUE)
+
+# Step 6: Compile all results
+results <- list(...)
+}
+```
+
+```{r}
+compare_distance_approaches <- function(sim_data, taxa, 
+                                       continuous_vars, discrete_vars) {}
+```
+
+Generate Simulations
+```{r}
+#SIM1
+sim1 <- rbind(
+  generate_species_mixed(25, c(20, 18, 21, 19, 12), c(0.7, 0.6, 0.8, 0.7, 0.5),
+                        cor_matrix, "Species_A", discrete_1A),  # LARGE
+  generate_species_mixed(25, c(15, 14, 16, 15, 10), c(0.6, 0.5, 0.7, 0.6, 0.5),
+                        cor_matrix, "Species_B", discrete_1B),  # INTERMEDIATE
+  generate_species_mixed(25, c(12, 11, 13, 12, 8), c(0.5, 0.4, 0.6, 0.5, 0.4),
+                        cor_matrix, "Species_C", discrete_1C)   # SMALL
+)
+
+#SIM2
+sim2 <- rbind(
+  generate_species_mixed(20, c(16.5, 15.0, 17.0, 16.0, 11.0), ...),  # LARGE
+  generate_species_mixed(20, c(15.0, 13.5, 15.5, 14.5, 10.0), ...),  # INTERMEDIATE
+  generate_species_mixed(20, c(14.0, 12.5, 14.5, 13.5, 9.5), ...)    # SMALL
+)
+
+#SIM3
+true_species <- generate_species_mixed(
+  60, c(15, 14, 16, 15, 10), c(1.2, 1.1, 1.3, 1.2, 0.9),
+  cor_matrix, "True_Species", discrete_3_all
+)
+
+sim3 <- true_species
+sim3$taxon <- rep(c("Taxon_A", "Taxon_B", "Taxon_C"), each = 20)
+
+# Add tiny site effects
+sim3$M1_BL[1:20] <- sim3$M1_BL[1:20] + rnorm(20, 0.3, 0.2)
+sim3$M1_BL[41:60] <- sim3$M1_BL[41:60] - rnorm(20, 0.3, 0.2)
+
+#SIM4
+for (time in 1:5) {
+  # Continuous measurements evolve directionally
+  time_specimens <- generate_species_mixed(
+    15, 
+    mean_vec = c(14, 13, 15, 14, 9) + 0.4 * time,  # Directional change
+    sd_vec = c(0.8, 0.7, 0.9, 0.8, 0.6),
+    ...
+  )
+  time_specimens$time_ma <- time
+}
+
+#SIM5
+regional_offsets <- list(
+  c(0, 0, 0, 0, 0),           # Region 1: baseline
+  c(0.4, 0.3, 0.5, 0.4, 0.2), # Region 2: slightly larger
+  c(-0.3, -0.2, -0.4, -0.3, -0.1) # Region 3: slightly smaller
+)
+```
+
+Running All Analyses
+```{r}
+# Analyze SIM1
+results_sim1 <- analyze_with_hybrid(
+  sim1, "SIM1", continuous_vars, discrete_vars,
+  optimize_alpha_flag = TRUE
+)
+
+#If handling for SIM3
+if (results_sim3$classification$accuracy < 0.65) {
+  cat("✓ CORRECT: Method shows appropriate uncertainty.\n")
+} else {
+  cat("✗ WARNING: Method may be over-splitting.\n")
+}
+#If handling for SIM4
+  sim2_between_prop <- var(tapply(sim2$M1_BL, sim2$taxon, mean)) / var(sim2$M1_BL)
+
+if (temporal_analysis_sim4$mean_temporal_variance < sim2_between_prop) {
+  cat("✓ CORRECT: Temporal < inter-specific threshold.\n")
+  cat("  Conclusion: Chronospecies, not multiple species.\n")
+}
+```
+
+Summary Tables
+```{r}
+summary_all <- data.frame(
+  Simulation = c("SIM1", "SIM2", "SIM3", "SIM4", "SIM5"),
+  Description = c("Easy separation", "Moderate separation", 
+                 "Oversplit (1 sp)", "Chronospecies", "Geographic"),
+  True_K = ...,
+  Estimated_K = ...,
+  Alpha = ...,
+  Accuracy = ...,
+  Confidence = ...,
+  Silhouette = ...
+)
+
+#Variance Table
+variance_summary <- data.frame(
+  Source = c("Inter-specific (SIM2)", "Temporal (SIM4)", "Geographic (SIM5)"),
+  Variance_Proportion = c(32.1, 18.4, 12.3),
+  Below_Species_Threshold = c(NA, TRUE, TRUE)
+)
+```
+
+Figures
+```{r}
+create_alpha_plot <- function(results_list) {
+  # Plot accuracy vs. alpha for each simulation
+  p <- ggplot(plot_data, aes(x = alpha, y = accuracy * 100, color = Simulation)) +
+    geom_line(linewidth = 1.2) +
+    geom_point(size = 2) +
+    geom_vline(..., linetype = "dashed")  # Optimal alpha lines
+}
+
+p1 <- ggplot(sim_data, aes(x = time_ma, y = M1_BL, color = taxon)) +
+  geom_point(size = 2.5, alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "black")
+
+p2 <- ggplot(discrete_summary, aes(x = time_ma, y = proportion, fill = cusp_pattern)) +
+  geom_area(alpha = 0.7)
+
+p <- ggplot(...) +
+  geom_bar(stat = "identity", width = 0.6, alpha = 0.8) +
+  geom_hline(yintercept = var_summary$Variance_Proportion[1],
+            linetype = "dashed", color = "red")
+```
+
+```{r}
+cat("\n\nKey Findings:\n")
+cat("-------------\n")
+cat("1. SIM1: Accuracy =", round(results_sim1$classification$accuracy * 100, 1), "%\n")
+cat("2. SIM2: Accuracy =", round(results_sim2$classification$accuracy * 100, 1), 
+    "% (α =", round(results_sim2$alpha_used, 3), ")\n")
+```
+

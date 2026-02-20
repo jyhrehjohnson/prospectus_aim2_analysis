@@ -1,0 +1,16 @@
+TAXONOMIC JUSTIFICATIONS
+========================
+
+
+SYNONYMIES
+==========
+
+**Species_A** = **Species_B**
+
+Justification: Insufficient morphological separation. Distance = 0.563 (below species threshold).
+
+**Species_B** = **Species_A**
+
+Justification: Insufficient morphological separation. Distance = 0.563 (below species threshold).
+
+
