@@ -53,15 +53,15 @@ sim1 <- rbind(
   ),
   generate_species(
     n = 25,
-    mean_vec = c(12, 11, 13, 12, 8),
-    sd_vec = c(0.5, 0.4, 0.6, 0.5, 0.4),
+    mean_vec = c(15, 14, 16, 15, 10),
+    sd_vec = c(0.6, 0.5, 0.7, 0.6, 0.5),
     cor_mat = cor_matrix,
     species_name = "Species_B"
   ),
   generate_species(
     n = 25,
-    mean_vec = c(15, 14, 16, 15, 10),
-    sd_vec = c(0.6, 0.5, 0.7, 0.6, 0.5),
+    mean_vec = c(12, 11, 13, 12, 8),
+    sd_vec = c(0.5, 0.4, 0.6, 0.5, 0.4),
     cor_mat = cor_matrix,
     species_name = "Species_C"
   )
@@ -87,14 +87,14 @@ sim2 <- rbind(
   ),
   generate_species(
     n = 20,
-    mean_vec = c(15.0, 13.5, 15.5, 14.5, 10.0),
+    mean_vec = c(14.0, 12.5, 14.5, 13.5, 9.5),
     sd_vec = c(0.9, 0.8, 1.0, 0.9, 0.7),
     cor_mat = cor_matrix,
     species_name = "Species_B"
   ),
   generate_species(
     n = 20,
-    mean_vec = c(14.0, 12.5, 14.5, 13.5, 9.5),
+    mean_vec = c(15.0, 13.5, 15.5, 14.5, 10.0),
     sd_vec = c(0.9, 0.8, 1.0, 0.9, 0.7),
     cor_mat = cor_matrix,
     species_name = "Species_C"

@@ -1,0 +1,7 @@
+"Approach","Alpha","Accuracy","Confidence","Uses_Covariance","Uses_Discrete"
+"Standard Gower",NA,0.766666666666667,0.7,FALSE,TRUE
+"Euclidean",NA,0.733333333333333,0.79,FALSE,FALSE
+"Hybrid (optimal alpha)",0.8,0.6,0.646666666666667,TRUE,TRUE
+"Hybrid (alpha = 0.5)",0.5,0.6,0.603333333333333,TRUE,TRUE
+"Mahalanobis only",1,0.6,0.636666666666667,TRUE,FALSE
+"Gower (discrete only)",0,0.433333333333333,0.713333333333333,FALSE,TRUE
