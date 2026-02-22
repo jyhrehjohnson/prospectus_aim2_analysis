@@ -394,7 +394,7 @@ Separates morphological variation into components:
 - **Geographic variance <15%**: Indicates single widespread species
 
 ### The Code:
-```{r variance-partitioning}
+```{r variance-partitioning1}
 analyze_temporal_variation <- function(data, continuous_vars, 
                                       time_var = "age_ma") {
   
@@ -601,7 +601,7 @@ cat("Silhouette score:",
 ```
 
 ### STEP 6: Variance Partitioning (If Applicable)
-```{r variance-partitioning}
+```{r variance-partitioning2}
 # For chronospecies analysis
 if ("age_ma" %in% names(australopith_data)) {
   temporal_analysis <- analyze_temporal_variation(
