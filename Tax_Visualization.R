@@ -17,7 +17,7 @@ library(igraph)
 
 create_taxonomic_dendrogram <- function(taxonomic_matrix, 
                                         title = "Taxonomic Relationships") {
-  #' Create hierarchical clustering dendrogram based on hybrid distances
+  #' Create hierarchical clustering dendrogram based on combined distances
   #' 
   #' @param taxonomic_matrix Output from create_taxonomic_comparison_matrix()
   #' @param title Plot title
@@ -54,8 +54,8 @@ create_taxonomic_dendrogram <- function(taxonomic_matrix,
     # Labels
     labs(
       title = title,
-      subtitle = "Based on Hybrid Distance Matrix (Mahalanobis + Gower)",
-      y = "Morphological Distance (Hybrid D)",
+      subtitle = "Based on Combined Distance Matrix (Mahalanobis + Gower)",
+      y = "Morphological Distance (Combined D)",
       x = ""
     ) +
     # Annotations for thresholds
@@ -250,7 +250,7 @@ create_distance_distribution_plot <- function(results, taxonomic_matrix) {
   #' @param taxonomic_matrix Taxonomic decisions
   #' @return ggplot object
   
-  dist_mat <- results$hybrid$distance_matrix
+  dist_mat <- results$combined$distance_matrix
   taxa <- results$data$taxon
   
   # Collect distances
@@ -296,7 +296,7 @@ create_distance_distribution_plot <- function(results, taxonomic_matrix) {
       title = "Distribution of Morphological Distances",
       subtitle = "Comparing within-taxon vs. between-taxa variation",
       x = "Comparison Type",
-      y = "Hybrid Distance (Mahalanobis + Gower)"
+      y = "Combined Distance (Mahalanobis + Gower)"
     ) +
     theme_minimal(base_size = 14) +
     theme(

@@ -1,5 +1,5 @@
 # ============================================================================
-# HYBRID MAHALANOBIS-GOWER DISTANCE ANALYSIS - COMPLETE MASTER SCRIPT
+# COMBINED MAHALANOBIS-GOWER DISTANCE ANALYSIS - COMPLETE MASTER SCRIPT
 # For Hominin Species Delimitation
 # 
 # Implements Solution 1C: Combining Mahalanobis distance (covariance-aware)
@@ -21,7 +21,7 @@ set.seed(2024)
 
 cat("\n")
 cat("========================================\n")
-cat("HYBRID DISTANCE ANALYSIS - MASTER SCRIPT\n")
+cat("COMBINED DISTANCE ANALYSIS - MASTER SCRIPT\n")
 cat("========================================\n\n")
 
 # ----------------------------------------------------------------------------
@@ -160,13 +160,13 @@ calc_gower_distance_discrete <- function(data) {
 }
 
 # ----------------------------------------------------------------------------
-# FUNCTION: Calculate hybrid distance
+# FUNCTION: Calculate combined distance
 # ----------------------------------------------------------------------------
 
-calc_hybrid_distance <- function(data, continuous_vars, discrete_vars, 
+calc_combined_distance <- function(data, continuous_vars, discrete_vars, 
                                  alpha = 0.5, robust = TRUE, 
                                  standardize_method = "minmax") {
-  #' Hybrid Mahalanobis-Gower distance
+  #' combined Mahalanobis-Gower distance
   
   n <- nrow(data)
   
@@ -196,7 +196,7 @@ calc_hybrid_distance <- function(data, continuous_vars, discrete_vars,
   }
   
   # 3. Combine
-  D_hybrid <- alpha * D_mahal_scaled + (1 - alpha) * D_gower
+  D_combined <- alpha * D_mahal_scaled + (1 - alpha) * D_gower
   
   # Diagnostics
   diagnostics <- list(
@@ -206,21 +206,21 @@ calc_hybrid_distance <- function(data, continuous_vars, discrete_vars,
     alpha = alpha,
     mean_mahal = mean(D_mahal_scaled[upper.tri(D_mahal_scaled)]),
     mean_gower = mean(D_gower[upper.tri(D_gower)]),
-    mean_hybrid = mean(D_hybrid[upper.tri(D_hybrid)])
+    mean_combined = mean(D_combined[upper.tri(D_combined)])
   )
   
-  cat("\nHybrid Distance Summary:\n")
+  cat("\nCombined Distance Summary:\n")
   cat("  Specimens:", diagnostics$n_specimens, "\n")
   cat("  Continuous vars:", diagnostics$n_continuous, "\n")
   cat("  Discrete vars:", diagnostics$n_discrete, "\n")
   cat("  Alpha:", round(alpha, 3), "\n")
   cat("  Mean Mahalanobis:", round(diagnostics$mean_mahal, 3), "\n")
   cat("  Mean Gower:", round(diagnostics$mean_gower, 3), "\n")
-  cat("  Mean hybrid:", round(diagnostics$mean_hybrid, 3), "\n")
+  cat("  Mean combined:", round(diagnostics$mean_combined, 3), "\n")
   
   return(list(
-    distance = as.dist(D_hybrid),
-    distance_matrix = D_hybrid,
+    distance = as.dist(D_combined),
+    distance_matrix = D_combined,
     mahalanobis_matrix = D_mahal_scaled,
     gower_matrix = D_gower,
     diagnostics = diagnostics,
@@ -345,13 +345,13 @@ optimize_alpha <- function(data, taxa, continuous_vars, discrete_vars,
   for (i in seq_along(alpha_range)) {
     alpha <- alpha_range[i]
     
-    hybrid <- calc_hybrid_distance(
+    combined <- calc_combined_distance(
       data, continuous_vars, discrete_vars, 
       alpha = alpha, robust = TRUE
     )
     
     classification <- classify_with_distance(
-      hybrid$distance, taxa, k_folds = k_folds
+      combined$distance, taxa, k_folds = k_folds
     )
     
     results$accuracy[i] <- classification$accuracy
@@ -514,7 +514,7 @@ analyze_geographic_variation <- function(sim_data, continuous_vars,
 # FUNCTION: Comprehensive analysis
 # ----------------------------------------------------------------------------
 
-analyze_with_hybrid <- function(sim_data, sim_name, 
+analyze_with_combined <- function(sim_data, sim_name, 
                                 continuous_vars, discrete_vars,
                                 optimize_alpha_flag = TRUE,
                                 alpha_default = 0.65) {
@@ -538,22 +538,22 @@ analyze_with_hybrid <- function(sim_data, sim_name,
     alpha_opt <- NULL
   }
   
-  # Calculate hybrid distance
-  cat("\nCalculating hybrid distance (alpha =", round(alpha_use, 3), ")...\n")
-  hybrid <- calc_hybrid_distance(
+  # Calculate combined distance
+  cat("\nCalculating combined distance (alpha =", round(alpha_use, 3), ")...\n")
+  combined <- calc_combined_distance(
     sim_data, continuous_vars, discrete_vars, 
     alpha = alpha_use, robust = TRUE
   )
   
   # Classification
   cat("Running classification...\n")
-  classification <- classify_with_distance(hybrid$distance, true_taxa)
+  classification <- classify_with_distance(combined$distance, true_taxa)
   cat("  Accuracy:", round(classification$accuracy * 100, 1), "%\n")
   cat("  Confidence:", round(classification$mean_confidence * 100, 1), "%\n")
   
   # Clustering
   cat("Running clustering...\n")
-  clustering <- cluster_with_distance(hybrid$distance, true_k = true_k)
+  clustering <- cluster_with_distance(combined$distance, true_k = true_k)
   cat("  Optimal k:", clustering$optimal_k, "(true k =", true_k, ")\n")
   cat("  Silhouette:", round(clustering$best_silhouette, 3), "\n")
   
@@ -574,7 +574,7 @@ analyze_with_hybrid <- function(sim_data, sim_name,
     n_specimens = nrow(sim_data),
     alpha_optimization = alpha_opt,
     alpha_used = alpha_use,
-    hybrid = hybrid,
+    combined = combined,
     classification = classification,
     clustering = clustering,
     pca = list(model = pca_result, data = pca_df),
@@ -593,46 +593,46 @@ analyze_with_hybrid <- function(sim_data, sim_name,
 
 compare_distance_approaches <- function(sim_data, taxa, 
                                         continuous_vars, discrete_vars) {
-  #' Compare hybrid to alternatives
+  #' Compare combined to alternatives
   
   cat("\nComparing distance approaches...\n")
   
   results <- data.frame()
   
-  # 1. Hybrid (optimized)
-  cat("  1. Hybrid (optimized)...\n")
+  # 1. Combined (optimized)
+  cat("  1. Combined (optimized)...\n")
   alpha_opt <- optimize_alpha(sim_data, taxa, continuous_vars, discrete_vars,
                               alpha_range = seq(0.4, 1, 0.05))
-  hybrid_opt <- calc_hybrid_distance(
+  combined_opt <- calc_combined_distance(
     sim_data, continuous_vars, discrete_vars, 
     alpha = alpha_opt$optimal_alpha
   )
-  class_hybrid_opt <- classify_with_distance(hybrid_opt$distance, taxa)
+  class_combined_opt <- classify_with_distance(combined_opt$distance, taxa)
   
   results <- rbind(results, data.frame(
-    Approach = "Hybrid (optimal alpha)",
+    Approach = "Combined (optimal alpha)",
     Alpha = alpha_opt$optimal_alpha,
-    Accuracy = class_hybrid_opt$accuracy,
-    Confidence = class_hybrid_opt$mean_confidence
+    Accuracy = class_combined_opt$accuracy,
+    Confidence = class_combined_opt$mean_confidence
   ))
   
-  # 2. Hybrid (alpha = 0.5)
-  cat("  2. Hybrid (alpha = 0.5)...\n")
-  hybrid_50 <- calc_hybrid_distance(
+  # 2. Combined (alpha = 0.5)
+  cat("  2. Combined (alpha = 0.5)...\n")
+  combined_50 <- calc_combined_distance(
     sim_data, continuous_vars, discrete_vars, alpha = 0.5
   )
-  class_hybrid_50 <- classify_with_distance(hybrid_50$distance, taxa)
+  class_combined_50 <- classify_with_distance(combined_50$distance, taxa)
   
   results <- rbind(results, data.frame(
-    Approach = "Hybrid (alpha = 0.5)",
+    Approach = "Combined (alpha = 0.5)",
     Alpha = 0.5,
-    Accuracy = class_hybrid_50$accuracy,
-    Confidence = class_hybrid_50$mean_confidence
+    Accuracy = class_combined_50$accuracy,
+    Confidence = class_combined_50$mean_confidence
   ))
   
   # 3. Mahalanobis only
   cat("  3. Mahalanobis only...\n")
-  mahal_only <- calc_hybrid_distance(
+  mahal_only <- calc_combined_distance(
     sim_data, continuous_vars, discrete_vars, alpha = 1.0
   )
   class_mahal <- classify_with_distance(mahal_only$distance, taxa)
@@ -742,7 +742,7 @@ sim1 <- rbind(
 )
 sim1$simulation <- "SIM1"
 sim1$true_n_species <- 3
-write.csv(sim1, "data/sim1_hybrid.csv", row.names = FALSE)
+write.csv(sim1, "data/sim1_combined.csv", row.names = FALSE)
 
 # ----------------------------------------------------------------------------
 # SIM2: Moderate Separation (RELABELED: Large=A, Intermediate=B, Small=C)
@@ -762,7 +762,7 @@ sim2 <- rbind(
 )
 sim2$simulation <- "SIM2"
 sim2$true_n_species <- 3
-write.csv(sim2, "data/sim2_hybrid.csv", row.names = FALSE)
+write.csv(sim2, "data/sim2_combined.csv", row.names = FALSE)
 
 # ----------------------------------------------------------------------------
 # SIM3: Oversplit (One species split into 3 taxa)
@@ -790,7 +790,7 @@ sim3$M1_BL[41:60] <- sim3$M1_BL[41:60] - rnorm(20, 0.3, 0.2)
 
 sim3$simulation <- "SIM3"
 sim3$true_n_species <- 1
-write.csv(sim3, "data/sim3_hybrid.csv", row.names = FALSE)
+write.csv(sim3, "data/sim3_combined.csv", row.names = FALSE)
 
 # ----------------------------------------------------------------------------
 # SIM4: Chronospecies (Temporal evolution)
@@ -833,7 +833,7 @@ for (time in 1:5) {
 
 sim4$simulation <- "SIM4"
 sim4$true_n_species <- 1
-write.csv(sim4, "data/sim4_hybrid.csv", row.names = FALSE)
+write.csv(sim4, "data/sim4_combined.csv", row.names = FALSE)
 
 # ----------------------------------------------------------------------------
 # SIM5: Geographic Variation
@@ -890,7 +890,7 @@ for (region in 1:3) {
 
 sim5$simulation <- "SIM5"
 sim5$true_n_species <- 1
-write.csv(sim5, "data/sim5_hybrid.csv", row.names = FALSE)
+write.csv(sim5, "data/sim5_combined.csv", row.names = FALSE)
 
 cat("\nAll simulations generated (SIM1-SIM5).\n")
 
@@ -906,26 +906,26 @@ continuous_vars <- c("M1_BL", "M1_MD", "M2_BL", "M2_MD", "P4_BL")
 discrete_vars <- c("cusp_pattern", "hypocone_size", "cingulum")
 
 # Load data (already in memory, but good practice)
-sim1 <- read.csv("data/sim1_hybrid.csv", stringsAsFactors = TRUE)
-sim2 <- read.csv("data/sim2_hybrid.csv", stringsAsFactors = TRUE)
-sim3 <- read.csv("data/sim3_hybrid.csv", stringsAsFactors = TRUE)
-sim4 <- read.csv("data/sim4_hybrid.csv", stringsAsFactors = TRUE)
-sim5 <- read.csv("data/sim5_hybrid.csv", stringsAsFactors = TRUE)
+sim1 <- read.csv("data/sim1_combined.csv", stringsAsFactors = TRUE)
+sim2 <- read.csv("data/sim2_combined.csv", stringsAsFactors = TRUE)
+sim3 <- read.csv("data/sim3_combined.csv", stringsAsFactors = TRUE)
+sim4 <- read.csv("data/sim4_combined.csv", stringsAsFactors = TRUE)
+sim5 <- read.csv("data/sim5_combined.csv", stringsAsFactors = TRUE)
 
 # Analyze SIM1
-results_sim1 <- analyze_with_hybrid(
+results_sim1 <- analyze_with_combined(
   sim1, "SIM1", continuous_vars, discrete_vars,
   optimize_alpha_flag = TRUE
 )
 
 # Analyze SIM2
-results_sim2 <- analyze_with_hybrid(
+results_sim2 <- analyze_with_combined(
   sim2, "SIM2", continuous_vars, discrete_vars,
   optimize_alpha_flag = TRUE
 )
 
 # Analyze SIM3
-results_sim3 <- analyze_with_hybrid(
+results_sim3 <- analyze_with_combined(
   sim3, "SIM3", continuous_vars, discrete_vars,
   optimize_alpha_flag = TRUE
 )
@@ -942,7 +942,7 @@ if (results_sim3$classification$accuracy < 0.65) {
 cat("***************************\n\n")
 
 # Analyze SIM4
-results_sim4 <- analyze_with_hybrid(
+results_sim4 <- analyze_with_combined(
   sim4, "SIM4", continuous_vars, discrete_vars,
   optimize_alpha_flag = FALSE,
   alpha_default = 0.65
@@ -973,7 +973,7 @@ if (temporal_analysis_sim4$mean_temporal_variance < sim2_between_prop) {
 cat("***************************\n\n")
 
 # Analyze SIM5
-results_sim5 <- analyze_with_hybrid(
+results_sim5 <- analyze_with_combined(
   sim5, "SIM5", continuous_vars, discrete_vars,
   optimize_alpha_flag = FALSE,
   alpha_default = 0.65
@@ -1358,7 +1358,7 @@ cat("5. SIM5: Geographic =",
 
 cat("\n\nFiles Created:\n")
 cat("--------------\n")
-cat("Data: ./data/sim1-5_hybrid.csv\n")
+cat("Data: ./data/sim1-5_combined.csv\n")
 cat("Results: ./results/*.csv and *.rds\n")
 cat("Figures: ./figures/Figure1-6.png\n")
 

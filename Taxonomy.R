@@ -1,11 +1,11 @@
 # ============================================================================
-# CREATE TAXONOMY FROM HYBRID DISTANCE ANALYSIS RESULTS
+# CREATE TAXONOMY FROM COMBINED DISTANCE ANALYSIS RESULTS
 # This script takes results from the master analysis and creates formal taxonomy
 # ============================================================================
 
 # This script assumes you've already run the master script and have:
 # - all_results (the RDS file with all simulation results)
-# - Real data analyzed with the hybrid method
+# - Real data analyzed with the combined method
 
 # ============================================================================
 # SECTION 1: SETUP AND LOAD RESULTS
@@ -16,7 +16,7 @@ all_results <- readRDS("results/all_results_complete.rds")
 
 # If you have real Australopithecus data, load it here
 # For now, we'll demonstrate using SIM2 as if it were real data
-demonstration_data <- read.csv("data/sim2_hybrid.csv", stringsAsFactors = TRUE)
+demonstration_data <- read.csv("data/sim2_combined.csv", stringsAsFactors = TRUE)
 
 cat("\n========================================\n")
 cat("TAXONOMY GENERATION FROM RESULTS\n")
@@ -31,11 +31,11 @@ define_taxonomic_thresholds <- function(sim2_results, sim3_results) {
   cat("Defining taxonomic decision thresholds...\n")
   
   # From SIM2 (REALISTIC SPECIES - these ARE distinct)
-  sim2_dist <- sim2_results$hybrid$distance_matrix
+  sim2_dist <- sim2_results$combined$distance_matrix
   sim2_between <- mean(sim2_dist[upper.tri(sim2_dist)])
   
   # From SIM3 (OVERSPLIT - these are NOT distinct)
-  sim3_dist <- sim3_results$hybrid$distance_matrix
+  sim3_dist <- sim3_results$combined$distance_matrix
   sim3_between <- mean(sim3_dist[upper.tri(sim3_dist)])
   
   thresholds <- list(
@@ -96,7 +96,7 @@ thresholds <- define_taxonomic_thresholds(
 
 analyze_real_data_for_taxonomy <- function(data, continuous_vars, discrete_vars,
                                            alpha = 0.65) {
-  #' Analyze real fossil data using hybrid distance method
+  #' Analyze real fossil data using combined distance method
   #' 
   #' @param data Data frame with specimens (rows) and measurements + taxon labels
   #' @param continuous_vars Vector of continuous variable names
@@ -112,20 +112,20 @@ analyze_real_data_for_taxonomy <- function(data, continuous_vars, discrete_vars,
   true_taxa <- data$taxon
   taxa_list <- unique(true_taxa)
   
-  # Calculate hybrid distance
-  hybrid <- calc_hybrid_distance(
+  # Calculate combined distance
+  combined <- calc_combined_distance(
     data, continuous_vars, discrete_vars,
     alpha = alpha, robust = TRUE
   )
   
   # Classification
   classification <- classify_with_distance(
-    hybrid$distance, true_taxa, k_folds = 5
+    combined$distance, true_taxa, k_folds = 5
   )
   
   # Clustering
   clustering <- cluster_with_distance(
-    hybrid$distance, true_k = length(taxa_list)
+    combined$distance, true_k = length(taxa_list)
   )
   
   # PCA
@@ -134,7 +134,7 @@ analyze_real_data_for_taxonomy <- function(data, continuous_vars, discrete_vars,
   results <- list(
     data = data,
     taxa_list = taxa_list,
-    hybrid = hybrid,
+    combined = combined,
     classification = classification,
     clustering = clustering,
     pca = pca_result
@@ -177,7 +177,7 @@ make_pairwise_decision <- function(taxon_A, taxon_B,
   idx_A <- which(results$data$taxon == taxon_A)
   idx_B <- which(results$data$taxon == taxon_B)
   
-  dist_mat <- results$hybrid$distance_matrix
+  dist_mat <- results$combined$distance_matrix
   
   # Calculate between-taxon distance
   between_distances <- dist_mat[idx_A, idx_B]

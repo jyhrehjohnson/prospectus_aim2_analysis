@@ -1,24 +1,12 @@
-# ============================================================================
-# GENERATE COMPREHENSIVE METHODS GUIDE PDF
-# Creates a professional PDF document explaining the complete workflow
-# ============================================================================
 
-# Install required packages if needed
-if (!require("rmarkdown")) install.packages("rmarkdown")
-if (!require("knitr")) install.packages("knitr")
-
-# ============================================================================
-# CREATE THE R MARKDOWN DOCUMENT
-# ============================================================================
-
-methods_rmd <- '
 ---
 title: "Combined Distance Method for Species Delimitation"
 subtitle: "Complete Methods Guide with Implementation Instructions"
-author: "Jyhreh Johnson"
+author: "Jyhreh Johnson - University of Texas at Austin"
 date: "`r Sys.Date()`"
 output:
   pdf_document:
+    latex_engine: xelatex
     toc: true
     toc_depth: 3
     number_sections: true
@@ -32,13 +20,13 @@ knitr::opts_chunk$set(echo = TRUE, eval = FALSE,
                       message = FALSE, warning = FALSE)
 ```
 
-\\newpage
+\newpage
 
 # INTRODUCTION
 
 ## Overview
 
-This document provides complete instructions for implementing the hybrid Mahalanobis-Gower distance method for species delimitation in fossil hominins. The method combines:
+This document provides complete instructions for implementing the combined Mahalanobis-Gower distance method for species delimitation in fossil hominins. The method combines:
 
 - **Mahalanobis distance** (continuous measurements with covariance structure)
 - **Gower distance** (discrete morphological characters)
@@ -52,7 +40,7 @@ Traditional distance metrics have limitations for paleontological data:
 - **Mahalanobis alone**: Cannot incorporate discrete traits
 - **Standard Gower**: Ignores covariance structure
 
-**Our hybrid approach addresses all three limitations.**
+**Our combined approach addresses all three limitations.**
 
 ## Key Innovation
 
@@ -62,7 +50,7 @@ The method establishes **empirically calibrated thresholds** from simulations:
 - **Temporal variance threshold**: <30% indicates chronospecies
 - **Geographic variance threshold**: <15% indicates single species
 
-\\newpage
+\newpage
 
 # WORKFLOW OVERVIEW
 
@@ -76,10 +64,10 @@ The method establishes **empirically calibrated thresholds** from simulations:
 └─────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────┐
-│ STEP 2: CALCULATE HYBRID DISTANCE                      │
+│ STEP 2: CALCULATE COMBINED DISTANCE                      │
 │ - Mahalanobis distance (continuous)                     │
 │ - Gower distance (discrete)                             │
-│ - Combine: D_hybrid = α×D_mahal + (1-α)×D_gower        │
+│ - Combine: D_combined = α×D_mahal + (1-α)×D_gower        │
 └─────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────┐
@@ -104,7 +92,7 @@ The method establishes **empirically calibrated thresholds** from simulations:
 └─────────────────────────────────────────────────────────┘
 ```
 
-\\newpage
+\newpage
 
 # DATA PREPARATION
 
@@ -155,18 +143,18 @@ write.csv(specimen_data, "data/australopithecus_data.csv",
 saveRDS(specimen_data, "data/australopithecus_data.rds")
 ```
 
-\\newpage
+\newpage
 
 # KEY FUNCTIONS EXPLAINED
 
-## Function 1: Calculate Hybrid Distance
+## Function 1: Calculate Combined Distance
 
 ### What It Does:
 
 Combines Mahalanobis distance (accounts for covariance) with Gower distance (handles discrete traits).
 
 ### How It Works:
-```{r hybrid-distance-explanation}
+```{r combined-distance-explanation}
 # STEP 1: Calculate Mahalanobis distance
 # - Centers continuous data
 # - Computes covariance matrix S
@@ -183,13 +171,13 @@ Combines Mahalanobis distance (accounts for covariance) with Gower distance (han
 # - Result: 0 (identical) to 1 (completely different)
 
 # STEP 4: Combine distances
-# D_hybrid = α × D_mahalanobis + (1-α) × D_gower
+# D_combined = α × D_mahalanobis + (1-α) × D_gower
 # where α ≈ 0.65 (optimal from simulations)
 ```
 
 ### The Code:
-```{r hybrid-function}
-calc_hybrid_distance <- function(data, continuous_vars, discrete_vars, 
+```{r combined-function}
+calc_combined_distance <- function(data, continuous_vars, discrete_vars, 
                                 alpha = 0.65, robust = TRUE) {
   
   n <- nrow(data)
@@ -228,11 +216,11 @@ calc_hybrid_distance <- function(data, continuous_vars, discrete_vars,
   }
   
   # 3. Combine
-  D_hybrid <- alpha * D_mahal_scaled + (1 - alpha) * D_gower
+  D_combined <- alpha * D_mahal_scaled + (1 - alpha) * D_gower
   
   return(list(
-    distance = as.dist(D_hybrid),
-    distance_matrix = D_hybrid,
+    distance = as.dist(D_combined),
+    distance_matrix = D_combined,
     mahalanobis_matrix = D_mahal_scaled,
     gower_matrix = D_gower,
     alpha = alpha
@@ -246,7 +234,7 @@ calc_hybrid_distance <- function(data, continuous_vars, discrete_vars,
 - **robust**: If TRUE, adds small value to diagonal of singular covariance matrices
 - **Returns**: Complete distance breakdown for analysis
 
-\\newpage
+\newpage
 
 ## Function 2: Classification with Cross-Validation
 
@@ -325,7 +313,7 @@ classify_with_distance <- function(distance_matrix, taxa,
 # - Both above 80% threshold → species are distinct
 ```
 
-\\newpage
+\newpage
 
 ## Function 3: Clustering Analysis
 
@@ -388,7 +376,7 @@ cluster_with_distance <- function(distance_matrix, true_k = NULL,
 #   → May indicate cryptic species OR temporal/geographic structure
 ```
 
-\\newpage
+\newpage
 
 ## Function 4: Variance Partitioning
 
@@ -454,7 +442,7 @@ analyze_temporal_variation <- function(data, continuous_vars,
 # Recommendation: Synonymize early and late forms
 ```
 
-\\newpage
+\newpage
 
 # DECISION CRITERIA
 
@@ -512,7 +500,7 @@ AND morphospace overlap > 40%
 THEN: Single widespread species (synonymize)
 ```
 
-\\newpage
+\newpage
 
 # IMPLEMENTING WITH REAL DATA
 
@@ -558,13 +546,13 @@ australopith_data <- australopith_data[
 # australopith_data[, continuous_vars] <- complete(imputed)
 ```
 
-### STEP 3: Calculate Hybrid Distance
+### STEP 3: Calculate Combined Distance
 ```{r calculate-distance}
 # Source the functions
-source("hybrid_distance_functions.R")
+source("combined_distance_functions.R")
 
 # Calculate distances
-hybrid_results <- calc_hybrid_distance(
+combined_results <- calc_combined_distance(
   data = australopith_data,
   continuous_vars = continuous_vars,
   discrete_vars = discrete_vars,
@@ -573,14 +561,14 @@ hybrid_results <- calc_hybrid_distance(
 )
 
 # Examine results
-print(hybrid_results$diagnostics)
+print(combined_results$diagnostics)
 ```
 
 ### STEP 4: Run Classification
 ```{r run-classification}
 # Classify specimens
 classification <- classify_with_distance(
-  distance_matrix = hybrid_results$distance,
+  distance_matrix = combined_results$distance,
   taxa = australopith_data$taxon,
   k_folds = 5,
   k_neighbors = 5
@@ -588,9 +576,9 @@ classification <- classify_with_distance(
 
 # Print results
 cat("Classification Accuracy:", 
-    round(classification$accuracy * 100, 1), "%\\n")
+    round(classification$accuracy * 100, 1), "%\n")
 cat("Mean Confidence:", 
-    round(classification$mean_confidence * 100, 1), "%\\n")
+    round(classification$mean_confidence * 100, 1), "%\n")
 
 # View confusion matrix
 print(classification$confusion_matrix)
@@ -600,16 +588,16 @@ print(classification$confusion_matrix)
 ```{r run-clustering}
 # Cluster analysis
 clustering <- cluster_with_distance(
-  distance_matrix = hybrid_results$distance,
+  distance_matrix = combined_results$distance,
   true_k = length(unique(australopith_data$taxon)),
   max_k = 6
 )
 
 # Print results
-cat("Optimal k:", clustering$optimal_k, "\\n")
-cat("True k:", clustering$true_k, "\\n")
+cat("Optimal k:", clustering$optimal_k, "\n")
+cat("True k:", clustering$true_k, "\n")
 cat("Silhouette score:", 
-    round(clustering$best_silhouette, 3), "\\n")
+    round(clustering$best_silhouette, 3), "\n")
 ```
 
 ### STEP 6: Variance Partitioning (If Applicable)
@@ -623,18 +611,18 @@ if ("age_ma" %in% names(australopith_data)) {
   )
   
   cat("Mean temporal variance:", 
-      round(temporal_analysis$mean_temporal_variance * 100, 1), "%\\n")
-  cat("Species threshold: 30%\\n")
+      round(temporal_analysis$mean_temporal_variance * 100, 1), "%\n")
+  cat("Species threshold: 30%\n")
   
   if (temporal_analysis$mean_temporal_variance < 0.30) {
-    cat("INTERPRETATION: Chronospecies (synonymize)\\n")
+    cat("INTERPRETATION: Chronospecies (synonymize)\n")
   } else {
-    cat("INTERPRETATION: Multiple species\\n")
+    cat("INTERPRETATION: Multiple species\n")
   }
 }
 ```
 
-\\newpage
+\newpage
 
 ## Making Taxonomic Decisions
 
@@ -647,7 +635,7 @@ afarensis_idx <- which(australopith_data$taxon == "Au_afarensis")
 africanus_idx <- which(australopith_data$taxon == "Au_africanus")
 
 # Calculate between-taxon distance
-dist_mat <- hybrid_results$distance_matrix
+dist_mat <- combined_results$distance_matrix
 between_dist <- mean(dist_mat[afarensis_idx, africanus_idx])
 
 # Get classification accuracy for this pair
@@ -662,14 +650,14 @@ if (between_dist > 0.4 && classification$accuracy > 0.80) {
   decision <- "UNCERTAIN - collect more data"
 }
 
-cat("Decision:", decision, "\\n")
-cat("Supporting evidence:\\n")
-cat("  Mean distance:", round(between_dist, 3), "\\n")
-cat("  Accuracy:", round(classification$accuracy * 100, 1), "%\\n")
-cat("  Silhouette:", round(clustering$best_silhouette, 3), "\\n")
+cat("Decision:", decision, "\n")
+cat("Supporting evidence:\n")
+cat("  Mean distance:", round(between_dist, 3), "\n")
+cat("  Accuracy:", round(classification$accuracy * 100, 1), "%\n")
+cat("  Silhouette:", round(clustering$best_silhouette, 3), "\n")
 ```
 
-\\newpage
+\newpage
 
 # INTERPRETATION GUIDE
 
@@ -735,7 +723,7 @@ Interpretation:
 Action: TENTATIVELY MAINTAIN pending more data
 ```
 
-\\newpage
+\newpage
 
 # TROUBLESHOOTING
 
@@ -750,7 +738,7 @@ Action: TENTATIVELY MAINTAIN pending more data
 **Solution:**
 ```{r fix-singular}
 # Option 1: Use robust = TRUE (already default)
-hybrid_results <- calc_hybrid_distance(..., robust = TRUE)
+combined_results <- calc_combined_distance(..., robust = TRUE)
 
 # Option 2: Remove redundant variables
 cor_matrix <- cor(data[, continuous_vars], use = "complete.obs")
@@ -784,7 +772,7 @@ table(missing_prop > 0.3)  # Should be mostly FALSE
 # Try different alpha
 alpha_test <- seq(0.4, 1.0, 0.1)
 results <- lapply(alpha_test, function(a) {
-  calc_hybrid_distance(..., alpha = a)
+  calc_combined_distance(..., alpha = a)
   # Run classification...
 })
 ```
@@ -825,7 +813,7 @@ results <- lapply(alpha_test, function(a) {
 # - Verify age estimates are correct
 ```
 
-\\newpage
+\newpage
 
 # VALIDATION CHECKLIST
 
@@ -842,7 +830,7 @@ Before finalizing taxonomic decisions, verify:
 ## ✓ Statistical Validation
 
 - [ ] Cross-validation performed (k-fold, not just training accuracy)
-- [ ] Multiple distance metrics compared (hybrid should outperform)
+- [ ] Multiple distance metrics compared (combined should outperform)
 - [ ] Clustering validated with multiple methods (PAM + hierarchical agree)
 - [ ] Posterior probabilities examined (not just point predictions)
 
@@ -864,7 +852,7 @@ Before finalizing taxonomic decisions, verify:
 - [ ] Small-sample taxa not over-interpreted
 - [ ] Synonymies supported by variance partitioning
 
-\\newpage
+\newpage
 
 # REPORTING RESULTS
 
@@ -872,10 +860,10 @@ Before finalizing taxonomic decisions, verify:
 
 ### Methods Section:
 ```
-"Species delimitation was performed using a hybrid distance metric 
+"Species delimitation was performed using a combined distance metric 
 combining Mahalanobis distance (accounting for covariance among 
 continuous measurements) with Gowers coefficient (incorporating 
-discrete morphological characters). The hybrid distance (D_hybrid = α × D_Mahalanobis + (1-α) × D_Gower, α = 0.65) was calculated for 
+discrete morphological characters). The combined distance (D_combined = α × D_Mahalanobis + (1-α) × D_Gower, α = 0.65) was calculated for 
 all specimen pairs. Taxonomic decisions were based on empirically 
 calibrated thresholds established from simulation studies: species 
 were recognized as distinct if Mahalanobis D² > 4.0, classification 
@@ -909,13 +897,13 @@ Abbreviations: D² = Mahalanobis distance (scaled); Acc = classification
 accuracy; Sil = silhouette score; chr = chronospecies
 ```
 
-\\newpage
+\newpage
 
 # REFERENCES
 
 ## Key Citations for Methods
 
-**Hybrid Distance Approach:**
+**combined Distance Approach:**
 - Gower JC (1971) A general coefficient of similarity. *Biometrics* 27:857-871
 - Mahalanobis PC (1936) On the generalized distance in statistics. *Proceedings of the National Institute of Sciences of India* 2:49-55
 
@@ -931,7 +919,7 @@ accuracy; Sil = silhouette score; chr = chronospecies
 - Wood BA (1991) *Koobi Fora Research Project, Volume 4: Hominid Cranial Remains*. Oxford University Press
 - Spoor F et al. (2015) Reconstructed Homo habilis type OH 7. *Nature* 519:83-86
 
-\\newpage
+\newpage
 
 # APPENDIX: COMPLETE FUNCTION LIBRARY
 
@@ -940,7 +928,7 @@ accuracy; Sil = silhouette score; chr = chronospecies
 For your convenience, here are all the main functions together:
 ```{r complete-functions}
 # [Include complete code for all functions here]
-# calc_hybrid_distance()
+# calc_combined_distance()
 # classify_with_distance()
 # cluster_with_distance()
 # analyze_temporal_variation()
@@ -965,46 +953,11 @@ If you encounter issues:
 
 For questions about implementation:
 - Email: your.email@institution.edu
-- GitHub: github.com/yourusername/hybrid-distance
+- GitHub: github.com/yourusername/combined-distance
 
 ---
 
 **Document Version:** 1.0  
 **Last Updated:** `r Sys.Date()`  
 **Software:** R version `r getRversion()`
-'
 
-# ============================================================================
-# SAVE AND COMPILE THE DOCUMENT
-# ============================================================================
-
-# Write the Rmd file
-writeLines(methods_rmd, "Methods_Guide.Rmd")
-
-cat("R Markdown file created: Methods_Guide.Rmd\n")
-cat("Compiling to PDF...\n\n")
-
-# Compile to PDF
-tryCatch({
-  rmarkdown::render("Methods_Guide.Rmd", 
-                   output_format = "pdf_document",
-                   output_file = "Methods_Guide.pdf")
-  
-  cat("\n========================================\n")
-  cat("SUCCESS! PDF CREATED\n")
-  cat("========================================\n\n")
-  cat("File saved as: Methods_Guide.pdf\n")
-  cat("Location: ", getwd(), "\n\n")
-  
-}, error = function(e) {
-  cat("\n========================================\n")
-  cat("PDF COMPILATION FAILED\n")
-  cat("========================================\n\n")
-  cat("Error:", conditionMessage(e), "\n\n")
-  cat("The .Rmd file was created successfully.\n")
-  cat("You can:\n")
-  cat("1. Open Methods_Guide.Rmd in RStudio and click 'Knit'\n")
-  cat("2. Or install missing packages:\n")
-  cat("   install.packages(c('rmarkdown', 'knitr', 'tinytex'))\n")
-  cat("   tinytex::install_tinytex()\n")
-})
