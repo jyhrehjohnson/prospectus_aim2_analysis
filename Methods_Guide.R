@@ -13,9 +13,9 @@ if (!require("knitr")) install.packages("knitr")
 
 methods_rmd <- '
 ---
-title: "Hybrid Distance Method for Species Delimitation"
+title: "Combined Distance Method for Species Delimitation"
 subtitle: "Complete Methods Guide with Implementation Instructions"
-author: "Your Name"
+author: "Jyhreh Johnson"
 date: "`r Sys.Date()`"
 output:
   pdf_document:
@@ -988,12 +988,12 @@ cat("Compiling to PDF...\n\n")
 tryCatch({
   rmarkdown::render("Methods_Guide.Rmd", 
                    output_format = "pdf_document",
-                   output_file = "Hybrid_Distance_Methods_Guide.pdf")
+                   output_file = "Methods_Guide.pdf")
   
   cat("\n========================================\n")
   cat("SUCCESS! PDF CREATED\n")
   cat("========================================\n\n")
-  cat("File saved as: Hybrid_Distance_Methods_Guide.pdf\n")
+  cat("File saved as: Methods_Guide.pdf\n")
   cat("Location: ", getwd(), "\n\n")
   
 }, error = function(e) {

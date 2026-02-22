@@ -1,7 +1,7 @@
 
 ---
-title: "Hybrid Distance Method for Species Delimitation"
-author: "Your Name"
+title: "Combined Distance Method for Species Delimitation"
+author: "Jyhreh Johnson-Guldager"
 date: "`r Sys.Date()`"
 output:
   pdf_document:
