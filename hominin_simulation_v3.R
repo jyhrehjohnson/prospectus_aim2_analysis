@@ -1,0 +1,671 @@
+# ================================================================
+# Hominin Alpha Taxonomy Simulation — v3: Stringency Improvements
+# Sequential vs. Simultaneous vs. Hybrid Protocol
+# Based on de Queiroz's General Lineage Concept
+# ================================================================
+#
+# CHANGES FROM v2 (four stringency improvements):
+#
+#   1. REALISTIC Mk SIMULATION
+#      - Transition rate q reduced from 0.5 to 0.08 (calibrated to
+#        primate morphological evolution rates)
+#      - Asymmetric ARD model option: gain rate ≠ loss rate
+#      - 1/2 → 0/1 indexing fix applied cleanly at source
+#
+#   2. MORE DISCRETE CHARACTERS
+#      - Increased from 4 to 20 binary characters
+#      - Gives Gower distance meaningful leverage in hybrid metric
+#
+#   3. AUTOMATIC k SELECTION IN PROTOCOL C
+#      - Silhouette width criterion replaces fixed k = 3
+#      - PAM now fully unsupervised: determines both k and assignments
+#      - k searched over 2:k_max (default 6)
+#
+#   4. PARAMETER SENSITIVITY SWEEP
+#      - Systematic grid over morphological overlap and dimorphism
+#      - Reports ARI surfaces for all three protocols across conditions
+#      - Quantifies anchoring bias variance as a function of parameters
+#
+# ================================================================
+# Required packages:
+# install.packages(c("phytools","ape","MASS","mclust","mvtnorm",
+#                    "cluster","ggplot2","tidyr","dplyr"))
+# ================================================================
+
+library(phytools)
+library(ape)
+library(MASS)
+library(mclust)
+library(mvtnorm)
+library(cluster)
+library(ggplot2)
+
+set.seed(42)
+
+# ================================================================
+# SECTION 1: PHYLOGENY
+# ================================================================
+hominin_tree <- read.tree(
+  text = "(Au_robustus:1.5,(Au_afarensis:1.0,Au_africanus:0.8):0.5);"
+)
+hominin_tree$tip.label <- c("Au. robustus", "Au. afarensis", "Au. africanus")
+
+cat("=== Hominin Phylogeny ===\n")
+print(hominin_tree)
+
+# ================================================================
+# SECTION 2a: CONTINUOUS TRAIT EVOLUTION (Brownian Motion)
+# ================================================================
+cont_trait_names <- c("M1_length", "M2_width", "cranial_capacity",
+                      "facial_prognathism", "palate_breadth")
+n_cont <- length(cont_trait_names)
+
+species_means <- matrix(
+  NA, nrow = Ntip(hominin_tree), ncol = n_cont,
+  dimnames = list(hominin_tree$tip.label, cont_trait_names)
+)
+
+for (i in seq_len(n_cont)) {
+  sim_result <- fastBM(hominin_tree, sig2 = 0.5, nsim = 1)
+  species_means[, i] <- sim_result[hominin_tree$tip.label]
+}
+
+cat("\n=== Simulated Species Trait Means (continuous) ===\n")
+print(round(species_means, 3))
+
+# ================================================================
+# SECTION 2b: DISCRETE TRAIT EVOLUTION — IMPROVEMENT 1 & 2
+# ================================================================
+# IMPROVEMENT 1: Reduced transition rate q = 0.08
+#   The original q = 0.5 was far too high relative to branch lengths
+#   of 0.8–1.5 Ma, producing near-random characters with most species
+#   sharing the same state. Empirical estimates of morphological
+#   state change rates in primates are closer to 0.05–0.1 per Ma.
+#   At q = 0.08, characters are much more likely to be fixed or
+#   nearly fixed within species, giving them real diagnostic power.
+#
+# IMPROVEMENT 2: 20 discrete characters (up from 4)
+#   4 characters is insufficient to give the Gower component
+#   meaningful signal. 20 characters approaches the lower bound
+#   of published cladistic matrices and gives the hybrid metric
+#   a fair chance to outperform continuous-only methods.
+#
+# ARD MODEL (optional, set use_ard = TRUE):
+#   The All-Rates-Different model allows gain ≠ loss rates,
+#   reflecting directional trends in character evolution
+#   (e.g., features tend to be gained more often than lost).
+# ================================================================
+
+# IMPROVEMENT 2: 20 discrete characters
+disc_trait_names <- paste0("char_", sprintf("%02d", 1:20))
+n_disc <- length(disc_trait_names)
+
+# IMPROVEMENT 1: Reduced symmetric rate (ER model)
+q_rate <- 0.08
+Q_mk   <- matrix(c(-q_rate, q_rate, q_rate, -q_rate), 2, 2,
+                 dimnames = list(c("0","1"), c("0","1")))
+
+# Optional ARD model: gain rate higher than loss rate
+# Uncomment to use asymmetric model instead
+# q_gain <- 0.10; q_loss <- 0.05
+# Q_mk <- matrix(c(-q_gain, q_gain, q_loss, -q_loss), 2, 2,
+#                dimnames = list(c("0","1"), c("0","1")))
+
+cat(sprintf("\nUsing Mk transition rate q = %.2f (ER symmetric model)\n", q_rate))
+cat(sprintf("Simulating %d discrete characters\n", n_disc))
+
+species_disc <- matrix(
+  NA, nrow = Ntip(hominin_tree), ncol = n_disc,
+  dimnames = list(hominin_tree$tip.label, disc_trait_names)
+)
+
+for (j in seq_len(n_disc)) {
+  sim_disc <- sim.Mk(hominin_tree, Q = Q_mk, nsim = 1)
+  # sim.Mk returns 1-indexed integers (1 = state 0, 2 = state 1)
+  # Subtract 1 to convert to 0/1 encoding
+  states <- as.integer(sim_disc[hominin_tree$tip.label]) - 1L
+  # Replace any residual NAs (rare, from very short branches)
+  states[is.na(states)] <- sample(0:1, sum(is.na(states)), replace = TRUE)
+  species_disc[, j] <- states
+}
+
+cat("\n=== Species Discrete Trait States (first 8 characters) ===\n")
+print(species_disc[, 1:8])
+
+# Report proportion of variable characters (diagnostic quality check)
+prop_variable <- mean(apply(species_disc, 2, function(x) length(unique(x)) > 1))
+cat(sprintf("Proportion of variable characters: %.2f (higher = more informative)\n",
+            prop_variable))
+
+# ================================================================
+# SECTION 3: SAMPLE FOSSIL SPECIMENS
+# ================================================================
+Sigma_w           <- matrix(0.15, n_cont, n_cont)
+diag(Sigma_w)     <- 0.4
+dimorphism_offset <- c(0.3, 0.2, 0.4, 0.1, 0.2)
+disc_error_rate   <- 0.10
+
+sample_sizes <- c("Au. robustus" = 8, "Au. afarensis" = 15, "Au. africanus" = 10)
+
+specimen_list <- list()
+
+for (taxon in hominin_tree$tip.label) {
+  n   <- as.integer(sample_sizes[taxon])
+  mu  <- species_means[taxon, ]
+  sex <- sample(c("M", "F"), n, replace = TRUE)
+
+  # Continuous traits with dimorphism
+  cont_mat <- t(sapply(sex, function(s) {
+    offset <- if (s == "M") dimorphism_offset else rep(0, n_cont)
+    rmvnorm(1, mean = mu + offset, sigma = Sigma_w)
+  }))
+  colnames(cont_mat) <- cont_trait_names
+
+  # Discrete traits: modal state + preservational noise
+  disc_mat <- t(sapply(seq_len(n), function(k) {
+    sapply(disc_trait_names, function(tr) {
+      modal_state <- species_disc[taxon, tr]
+      if (runif(1) < disc_error_rate) 1L - modal_state else modal_state
+    })
+  }))
+
+  disc_df <- as.data.frame(disc_mat)
+  disc_df[] <- lapply(disc_df, function(x) factor(x, levels = c(0, 1)))
+
+  specimen_list[[taxon]] <- cbind(
+    data.frame(taxon = taxon, sex = sex, stringsAsFactors = FALSE),
+    as.data.frame(cont_mat),
+    disc_df
+  )
+}
+
+all_specimens <- do.call(rbind, specimen_list)
+rownames(all_specimens) <- NULL
+
+# Re-enforce factor encoding after rbind (rbind can silently drop levels)
+for (tr in disc_trait_names) {
+  all_specimens[[tr]] <- factor(
+    as.integer(as.character(all_specimens[[tr]])),
+    levels = c(0, 1)
+  )
+}
+
+cat(sprintf("\nTotal specimens: %d\n", nrow(all_specimens)))
+
+# Verify no NAs in discrete columns
+na_counts <- sapply(disc_trait_names, function(tr) sum(is.na(all_specimens[[tr]])))
+if (any(na_counts > 0)) {
+  warning("NAs remain in discrete columns after encoding fix:")
+  print(na_counts[na_counts > 0])
+} else {
+  cat("Discrete trait encoding verified — no NAs detected.\n")
+}
+
+# ================================================================
+# SECTION 4: HYBRID DISTANCE FUNCTION
+# ================================================================
+#   D_hybrid(i,j) = α × D_maha_scaled(i,j) + (1-α) × D_gower(i,j)
+
+compute_hybrid_dist <- function(specimens, cont_cols, disc_cols, alpha = 0.65) {
+
+  n <- nrow(specimens)
+
+  # --- Mahalanobis on continuous traits ---
+  cont_data <- as.matrix(specimens[, cont_cols])
+  S         <- cov(cont_data)
+  S_inv     <- solve(S + diag(1e-6, ncol(S)))
+
+  maha_mat <- matrix(0, n, n)
+  for (i in seq_len(n - 1)) {
+    for (j in (i + 1):n) {
+      dv             <- cont_data[i, ] - cont_data[j, ]
+      d              <- sqrt(as.numeric(t(dv) %*% S_inv %*% dv))
+      maha_mat[i, j] <- d
+      maha_mat[j, i] <- d
+    }
+  }
+  maha_max    <- max(maha_mat)
+  maha_scaled <- if (maha_max > 0) maha_mat / maha_max else maha_mat
+
+  # --- Gower on discrete traits ---
+  disc_data <- specimens[, disc_cols, drop = FALSE]
+  disc_data[] <- lapply(disc_data, function(x) {
+    factor(as.integer(as.character(x)), levels = c(0, 1))
+  })
+  gower_mat <- as.matrix(daisy(disc_data, metric = "gower"))
+  gower_mat[is.na(gower_mat)] <- 0.5   # fallback for residual NAs
+
+  as.dist(alpha * maha_scaled + (1 - alpha) * gower_mat)
+}
+
+# ================================================================
+# SECTION 4b: OPTIMIZE α
+# ================================================================
+true_labels <- as.integer(factor(all_specimens$taxon,
+                                  levels = hominin_tree$tip.label))
+
+cat("\n=== Optimizing alpha ===\n")
+
+alpha_grid <- seq(0, 1, by = 0.05)
+alpha_aris <- numeric(length(alpha_grid))
+
+for (k in seq_along(alpha_grid)) {
+  D             <- compute_hybrid_dist(all_specimens, cont_trait_names,
+                                       disc_trait_names, alpha = alpha_grid[k])
+  pam_fit       <- pam(D, k = 3, diss = TRUE)
+  alpha_aris[k] <- adjustedRandIndex(pam_fit$clustering, true_labels)
+}
+
+best_alpha <- alpha_grid[which.max(alpha_aris)]
+cat(sprintf("  Best alpha: %.2f  (ARI = %.3f)\n",
+            best_alpha, max(alpha_aris)))
+
+# ================================================================
+# SECTION 5: CLASSIFICATION PROTOCOLS
+# ================================================================
+
+evaluate <- function(predicted, true) adjustedRandIndex(predicted, true)
+
+# --- Protocol A: Sequential ---
+sequential_classify <- function(specimens, discovery_order,
+                                seed_size = 6, new_group_threshold = 3.5) {
+  n           <- nrow(specimens)
+  assignments <- rep(NA, n)
+  ordered     <- specimens[discovery_order, ]
+
+  seed_data  <- as.matrix(ordered[seq_len(seed_size), cont_trait_names])
+  seed_clust <- kmeans(seed_data, centers = min(3, seed_size), nstart = 10)
+  assignments[seq_len(seed_size)] <- seed_clust$cluster
+
+  n_groups        <- max(seed_clust$cluster)
+  group_centroids <- lapply(seq_len(n_groups), function(g) {
+    colMeans(seed_data[seed_clust$cluster == g, , drop = FALSE])
+  })
+
+  for (i in (seed_size + 1):n) {
+    specimen <- as.numeric(ordered[i, cont_trait_names])
+    dists    <- sapply(group_centroids, function(c) sqrt(sum((specimen - c)^2)))
+
+    if (min(dists) > new_group_threshold) {
+      n_groups <- n_groups + 1
+      assignments[i] <- n_groups
+      group_centroids[[n_groups]] <- specimen
+    } else {
+      best <- which.min(dists)
+      assignments[i] <- best
+      members <- which(assignments[seq_len(i)] == best)
+      group_centroids[[best]] <- colMeans(
+        as.matrix(ordered[members, cont_trait_names, drop = FALSE])
+      )
+    }
+  }
+  result <- rep(NA, n)
+  result[discovery_order] <- assignments
+  result
+}
+
+# --- Protocol B: Simultaneous GMM ---
+simultaneous_classify <- function(specimens, max_groups = 6) {
+  fit <- Mclust(as.matrix(specimens[, cont_trait_names]),
+                G = 2:max_groups, verbose = FALSE)
+  fit$classification
+}
+
+# ================================================================
+# IMPROVEMENT 3: AUTOMATIC k SELECTION IN PROTOCOL C
+# ================================================================
+# Previously Protocol C required k = 3 to be specified in advance,
+# which is unrealistic — in a real analysis the number of species is
+# exactly what is unknown. The silhouette width criterion selects k
+# automatically by running PAM over k = 2:k_max, computing the
+# average silhouette width for each k, and returning the k with the
+# highest value.
+#
+# Silhouette width for specimen i:
+#   s(i) = (b(i) - a(i)) / max(a(i), b(i))
+#   a(i) = mean distance to other members of i's own cluster
+#   b(i) = mean distance to members of the nearest other cluster
+#   s(i) ranges from -1 (misclassified) to +1 (well-classified)
+#
+# Average silhouette width across all specimens gives a scalar
+# measure of clustering quality for a given k. The k maximizing
+# this is the data-driven choice.
+# ================================================================
+
+select_k_silhouette <- function(D, k_max = 6) {
+  # Compute average silhouette width for k = 2 to k_max
+  sil_widths <- sapply(2:k_max, function(k) {
+    pam_k   <- pam(D, k = k, diss = TRUE)
+    sil_obj <- silhouette(pam_k$clustering, D)
+    mean(sil_obj[, "sil_width"])
+  })
+  best_k <- (2:k_max)[which.max(sil_widths)]
+  list(best_k = best_k, sil_widths = sil_widths, k_range = 2:k_max)
+}
+
+hybrid_classify <- function(specimens, alpha = 0.65, k_max = 6) {
+  D      <- compute_hybrid_dist(specimens, cont_trait_names,
+                                 disc_trait_names, alpha = alpha)
+  k_sel  <- select_k_silhouette(D, k_max = k_max)
+  pam_fit <- pam(D, k = k_sel$best_k, diss = TRUE)
+  list(clustering  = pam_fit$clustering,
+       k_selected  = k_sel$best_k,
+       sil_widths  = k_sel$sil_widths,
+       k_range     = k_sel$k_range,
+       medoids     = pam_fit$medoids)
+}
+
+# ================================================================
+# SECTION 6: RUN ALL THREE PROTOCOLS
+# ================================================================
+
+n_orderings      <- 5
+discovery_orders <- lapply(seq_len(n_orderings), function(i) sample(nrow(all_specimens)))
+
+cat("\n=== Running all three protocols ===\n\n")
+
+# Protocol A
+seq_results <- lapply(seq_along(discovery_orders), function(i) {
+  assn  <- sequential_classify(all_specimens, discovery_orders[[i]])
+  ari   <- evaluate(assn, true_labels)
+  n_grp <- length(unique(assn[!is.na(assn)]))
+  list(ordering = i, n_groups = n_grp, ari = ari, assignments = assn)
+})
+
+cat("SEQUENTIAL results:\n")
+for (res in seq_results) {
+  cat(sprintf("  Order %d | Groups: %d | ARI: %.3f\n",
+              res$ordering, res$n_groups, res$ari))
+}
+
+# Protocol B
+simult_assn  <- simultaneous_classify(all_specimens)
+simult_ari   <- evaluate(simult_assn, true_labels)
+simult_n_grp <- length(unique(simult_assn))
+cat(sprintf("\nSIMULTANEOUS GMM | Groups: %d | ARI: %.3f\n", simult_n_grp, simult_ari))
+
+# Protocol C (automatic k)
+hybrid_result <- hybrid_classify(all_specimens, alpha = best_alpha)
+hybrid_ari    <- evaluate(hybrid_result$clustering, true_labels)
+cat(sprintf("HYBRID PAM       | Groups selected: %d | ARI: %.3f\n",
+            hybrid_result$k_selected, hybrid_ari))
+cat(sprintf("  Silhouette widths by k: %s\n",
+            paste(sprintf("k%d=%.3f", hybrid_result$k_range,
+                           hybrid_result$sil_widths), collapse = "  ")))
+cat(sprintf("  Medoid specimen indices: %s\n",
+            paste(hybrid_result$medoids, collapse = ", ")))
+
+seq_aris <- sapply(seq_results, `[[`, "ari")
+cat("\n--- Summary ---\n")
+cat(sprintf("Sequential   mean ARI: %.3f  SD: %.3f\n", mean(seq_aris), sd(seq_aris)))
+cat(sprintf("Simultaneous ARI:      %.3f\n", simult_ari))
+cat(sprintf("Hybrid       ARI:      %.3f  (k=%d, alpha=%.2f)\n",
+            hybrid_ari, hybrid_result$k_selected, best_alpha))
+
+# ================================================================
+# IMPROVEMENT 4: PARAMETER SENSITIVITY SWEEP
+# ================================================================
+# Systematic grid over two parameters central to the dissertation:
+#
+#   sig2_vals:   BM evolutionary rate — controls degree of between-
+#                species divergence relative to within-species variance.
+#                Low sig2 = species overlap heavily (hard problem).
+#                High sig2 = species are well separated (easy problem).
+#
+#   dimorphism_scale: multiplier on dimorphism_offset — controls how
+#                much sexual dimorphism inflates within-species spread.
+#                At 0 = no dimorphism; at 2.0 = very high dimorphism.
+#
+# For each parameter combination, 20 Monte Carlo replicates are run.
+# ARI mean and SD are recorded for all three protocols.
+# SD of sequential ARI across discovery orders measures anchoring bias.
+# ================================================================
+
+cat("\n=== Parameter Sensitivity Sweep ===\n")
+cat("(This may take a few minutes)\n\n")
+
+sig2_vals        <- c(0.2, 0.5, 1.0)
+dimorphism_scale <- c(0.0, 1.0, 2.0)
+n_mc_reps        <- 20   # increase to 100 for dissertation-grade results
+
+# Storage: rows = parameter combinations, cols = metrics
+sweep_results <- expand.grid(sig2 = sig2_vals, dimorph = dimorphism_scale)
+sweep_results$seq_mean_ari  <- NA
+sweep_results$seq_sd_ari    <- NA
+sweep_results$gmm_mean_ari  <- NA
+sweep_results$hybrid_mean_ari <- NA
+sweep_results$hybrid_mean_k <- NA
+
+for (row_idx in seq_len(nrow(sweep_results))) {
+
+  s2   <- sweep_results$sig2[row_idx]
+  dscl <- sweep_results$dimorph[row_idx]
+
+  rep_seq_ari    <- numeric(n_mc_reps)
+  rep_gmm_ari    <- numeric(n_mc_reps)
+  rep_hybrid_ari <- numeric(n_mc_reps)
+  rep_hybrid_k   <- numeric(n_mc_reps)
+
+  for (rep in seq_len(n_mc_reps)) {
+
+    # Re-simulate species means under this sig2
+    sp_means_rep <- matrix(NA, nrow = 3, ncol = n_cont,
+                           dimnames = list(hominin_tree$tip.label, cont_trait_names))
+    for (i in seq_len(n_cont)) {
+      sr <- fastBM(hominin_tree, sig2 = s2, nsim = 1)
+      sp_means_rep[, i] <- sr[hominin_tree$tip.label]
+    }
+
+    # Sample specimens with current dimorphism scale
+    doff <- dimorphism_offset * dscl
+    slist_rep <- list()
+    for (taxon in hominin_tree$tip.label) {
+      n_sp  <- as.integer(sample_sizes[taxon])
+      mu_sp <- sp_means_rep[taxon, ]
+      sex_sp <- sample(c("M","F"), n_sp, replace = TRUE)
+      cm <- t(sapply(sex_sp, function(s) {
+        off <- if (s == "M") doff else rep(0, n_cont)
+        rmvnorm(1, mean = mu_sp + off, sigma = Sigma_w)
+      }))
+      colnames(cm) <- cont_trait_names
+      dm <- t(sapply(seq_len(n_sp), function(k) {
+        sapply(disc_trait_names, function(tr) {
+          ms <- species_disc[taxon, tr]
+          if (runif(1) < disc_error_rate) 1L - ms else ms
+        })
+      }))
+      df_d <- as.data.frame(dm)
+      df_d[] <- lapply(df_d, function(x) factor(x, levels = c(0,1)))
+      slist_rep[[taxon]] <- cbind(
+        data.frame(taxon = taxon, sex = sex_sp, stringsAsFactors = FALSE),
+        as.data.frame(cm), df_d
+      )
+    }
+    sp_rep <- do.call(rbind, slist_rep)
+    rownames(sp_rep) <- NULL
+    for (tr in disc_trait_names) {
+      sp_rep[[tr]] <- factor(as.integer(as.character(sp_rep[[tr]])), levels = c(0,1))
+    }
+
+    tl_rep <- as.integer(factor(sp_rep$taxon, levels = hominin_tree$tip.label))
+
+    # Sequential (single random order per replicate)
+    ord_rep <- sample(nrow(sp_rep))
+    seq_a   <- sequential_classify(sp_rep, ord_rep)
+    rep_seq_ari[rep] <- adjustedRandIndex(seq_a, tl_rep)
+
+    # GMM
+    gmm_rep <- Mclust(as.matrix(sp_rep[, cont_trait_names]),
+                      G = 2:6, verbose = FALSE)
+    rep_gmm_ari[rep] <- adjustedRandIndex(gmm_rep$classification, tl_rep)
+
+    # Hybrid with silhouette k selection
+    # Use best_alpha from main run for consistency
+    D_rep       <- compute_hybrid_dist(sp_rep, cont_trait_names, disc_trait_names,
+                                        alpha = best_alpha)
+    k_rep       <- select_k_silhouette(D_rep, k_max = 6)
+    pam_rep     <- pam(D_rep, k = k_rep$best_k, diss = TRUE)
+    rep_hybrid_ari[rep] <- adjustedRandIndex(pam_rep$clustering, tl_rep)
+    rep_hybrid_k[rep]   <- k_rep$best_k
+  }
+
+  sweep_results$seq_mean_ari[row_idx]    <- mean(rep_seq_ari)
+  sweep_results$seq_sd_ari[row_idx]      <- sd(rep_seq_ari)
+  sweep_results$gmm_mean_ari[row_idx]    <- mean(rep_gmm_ari)
+  sweep_results$hybrid_mean_ari[row_idx] <- mean(rep_hybrid_ari)
+  sweep_results$hybrid_mean_k[row_idx]   <- mean(rep_hybrid_k)
+
+  cat(sprintf(
+    "sig2=%.1f dimorph=%.1f | Seq: %.2f±%.2f | GMM: %.2f | Hybrid: %.2f (mean k=%.1f)\n",
+    s2, dscl,
+    mean(rep_seq_ari), sd(rep_seq_ari),
+    mean(rep_gmm_ari),
+    mean(rep_hybrid_ari), mean(rep_hybrid_k)
+  ))
+}
+
+cat("\n=== Full Sensitivity Table ===\n")
+print(round(sweep_results, 3))
+
+# ================================================================
+# VISUALIZATION
+# ================================================================
+
+pca       <- prcomp(all_specimens[, cont_trait_names], scale. = TRUE)
+pc_scores <- as.data.frame(pca$x[, 1:2])
+pc_scores$true_taxon   <- all_specimens$taxon
+pc_scores$seq_group    <- factor(seq_results[[1]]$assignments)
+pc_scores$simult_group <- factor(simult_assn)
+pc_scores$hybrid_group <- factor(hybrid_result$clustering)
+
+taxon_cols <- c("Au. robustus"  = "#E74C3C",
+                "Au. afarensis" = "#3498DB",
+                "Au. africanus" = "#2ECC71")
+
+theme_hominin <- theme_minimal(base_size = 13) +
+  theme(plot.title    = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, color = "grey40"),
+        legend.position = "right",
+        panel.grid.minor = element_blank())
+
+plot_true <- ggplot(pc_scores, aes(x = PC1, y = PC2, color = true_taxon)) +
+  geom_point(size = 3, alpha = 0.85) +
+  scale_color_manual(values = taxon_cols, name = "Species") +
+  labs(title = "True Species", x = "PC1", y = "PC2") +
+  theme_hominin
+
+plot_sequential <- ggplot(pc_scores, aes(x = PC1, y = PC2, color = seq_group)) +
+  geom_point(size = 3, alpha = 0.85) +
+  scale_color_brewer(palette = "Set1", name = "Group") +
+  labs(title = "Sequential Classification (Order 1)",
+       subtitle = sprintf("Groups = %d   ARI = %.2f",
+                          seq_results[[1]]$n_groups, seq_results[[1]]$ari),
+       x = "PC1", y = "PC2") +
+  theme_hominin
+
+plot_gmm <- ggplot(pc_scores, aes(x = PC1, y = PC2, color = simult_group)) +
+  geom_point(size = 3, alpha = 0.85) +
+  scale_color_brewer(palette = "Set1", name = "Group") +
+  labs(title = "Simultaneous GMM",
+       subtitle = sprintf("Groups = %d   ARI = %.2f", simult_n_grp, simult_ari),
+       x = "PC1", y = "PC2") +
+  theme_hominin
+
+plot_hybrid <- ggplot(pc_scores, aes(x = PC1, y = PC2, color = hybrid_group)) +
+  geom_point(size = 3, alpha = 0.85) +
+  scale_color_brewer(palette = "Set1", name = "Group") +
+  labs(title = sprintf("Hybrid PAM (α = %.2f, k = %d)", best_alpha, hybrid_result$k_selected),
+       subtitle = sprintf("Groups = %d   ARI = %.2f",
+                          hybrid_result$k_selected, hybrid_ari),
+       x = "PC1", y = "PC2") +
+  theme_hominin
+
+plot_alpha <- ggplot(data.frame(alpha = alpha_grid, ARI = alpha_aris),
+                     aes(x = alpha, y = ARI)) +
+  geom_line(color = "#8E44AD", linewidth = 0.8) +
+  geom_point(color = "#8E44AD", size = 2.5) +
+  geom_vline(xintercept = best_alpha, linetype = "dashed", color = "red") +
+  annotate("text", x = best_alpha + 0.03, y = min(alpha_aris) + 0.03,
+           label = sprintf("alpha = %.2f", best_alpha),
+           color = "red", hjust = 0, size = 3.5) +
+  labs(title = "Hybrid Distance: ARI vs. Alpha",
+       x = "Alpha (Mahalanobis weight)", y = "Adjusted Rand Index") +
+  theme_hominin
+
+# Silhouette width plot for hybrid k selection
+plot_silhouette <- ggplot(
+  data.frame(k = hybrid_result$k_range, sil = hybrid_result$sil_widths),
+  aes(x = k, y = sil)) +
+  geom_line(color = "#1A5276", linewidth = 0.8) +
+  geom_point(color = "#1A5276", size = 3) +
+  geom_vline(xintercept = hybrid_result$k_selected, linetype = "dashed", color = "red") +
+  annotate("text", x = hybrid_result$k_selected + 0.1,
+           y = min(hybrid_result$sil_widths) + 0.01,
+           label = sprintf("k = %d selected", hybrid_result$k_selected),
+           color = "red", hjust = 0, size = 3.5) +
+  scale_x_continuous(breaks = hybrid_result$k_range) +
+  labs(title = "Silhouette Width by k (Hybrid PAM)",
+       subtitle = "Higher = better clustering quality",
+       x = "Number of groups (k)", y = "Average silhouette width") +
+  theme_hominin
+
+# Sensitivity sweep heatmaps
+sweep_long_seq <- data.frame(
+  sig2    = factor(sweep_results$sig2),
+  dimorph = factor(sweep_results$dimorph),
+  ARI     = sweep_results$seq_mean_ari,
+  SD      = sweep_results$seq_sd_ari,
+  Protocol = "Sequential"
+)
+sweep_long_gmm <- data.frame(
+  sig2    = factor(sweep_results$sig2),
+  dimorph = factor(sweep_results$dimorph),
+  ARI     = sweep_results$gmm_mean_ari,
+  SD      = NA_real_,
+  Protocol = "GMM"
+)
+sweep_long_hyb <- data.frame(
+  sig2    = factor(sweep_results$sig2),
+  dimorph = factor(sweep_results$dimorph),
+  ARI     = sweep_results$hybrid_mean_ari,
+  SD      = NA_real_,
+  Protocol = "Hybrid"
+)
+sweep_long <- rbind(sweep_long_seq, sweep_long_gmm, sweep_long_hyb)
+
+plot_sweep_ari <- ggplot(sweep_long,
+                          aes(x = sig2, y = dimorph, fill = ARI)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = sprintf("%.2f", ARI)), size = 3.5, color = "white", fontface = "bold") +
+  scale_fill_gradient(low = "#C0392B", high = "#1A5276",
+                      name = "Mean ARI", limits = c(0, 1)) +
+  facet_wrap(~ Protocol) +
+  labs(title = "Mean ARI Across Parameter Space",
+       x = expression(sigma^2 ~ "(BM evolutionary rate)"),
+       y = "Dimorphism scale") +
+  theme_hominin +
+  theme(axis.text = element_text(size = 11))
+
+plot_sweep_bias <- ggplot(sweep_long_seq,
+                           aes(x = sig2, y = dimorph, fill = SD)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = sprintf("%.2f", SD)), size = 3.5, color = "white", fontface = "bold") +
+  scale_fill_gradient(low = "#D5F5E3", high = "#922B21",
+                      name = "ARI SD\n(anchoring bias)") +
+  labs(title = "Sequential Protocol: Anchoring Bias Magnitude",
+       subtitle = "SD of ARI across discovery orders — higher = more path-dependent",
+       x = expression(sigma^2 ~ "(BM evolutionary rate)"),
+       y = "Dimorphism scale") +
+  theme_hominin
+
+# Print all plots
+for (p in list(plot_true, plot_sequential, plot_gmm, plot_hybrid,
+               plot_alpha, plot_silhouette, plot_sweep_ari, plot_sweep_bias)) {
+  print(p)
+}
+
+cat("\n=== Simulation v3 complete ===\n")
+cat(sprintf("Best alpha: %.2f | Hybrid k: %d | Hybrid ARI: %.3f\n",
+            best_alpha, hybrid_result$k_selected, hybrid_ari))
+cat(sprintf("Sequential mean ARI: %.3f (SD: %.3f) | GMM ARI: %.3f\n",
+            mean(seq_aris), sd(seq_aris), simult_ari))

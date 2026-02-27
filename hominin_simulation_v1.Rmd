@@ -4,7 +4,15 @@ author: "Jyhreh Johnson"
 date: "2026-02-27"
 output: html_document
 ---
-
+# ============================================================
+# Hominin Alpha Taxonomy Simulation — v2: Combined Distance
+# Sequential vs. Simultaneous vs. Combined Protocol
+# Based on de Queiroz's General Lineage Concept
+# ============================================================
+# Required packages:
+# install.packages(c("phytools","ape","MASS","mclust","mvtnorm",
+#                    "cluster","StatMatch","dendextend"))
+# ============================================================
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -15,37 +23,44 @@ library(ape)
 library(MASS)
 library(mclust)
 library(mvtnorm)
+library(cluster)      # daisy() for Gower distance
+library(StatMatch)    # mahalanobis.dist()
 
-set.seed(42)  #For reproducibility
+set.seed(42)
 ```
 
 # ============================================================
-# SECTION 1: SIMULATE A HOMININ PHYLOGENY (3 taxa)
+# SECTION 1: PHYLOGENY
 # ============================================================
 ```{r}
 hominin_tree <- read.tree(
-text = "(P_robustus:1.5,(A_afarensis:1.0,A_africanus:0.8):0.5);"
+  text = "(P_robustus:1.5,(A_afarensis:1.0,A_africanus:0.8):0.5);" #MAKE SURE TO CHANGE AGES!!
+
+#Newick-format string. Colons separate taxon names from its branch length which is recorded in millions of years. Read the string from left to right. Paranthropus is the outgroup from afarensis and africanus. Afarensis and africanus form a clade at the internal branch 0.5; they are a sister pair at 1.0 & 0.8 terminal branches. 
 )
-hominin_tree$tip.label <- c("P. robustus", "A. afarensis", "A. africanus")
+hominin_tree$tip.label <- c("P. robustus", "A. afarensis", "A. africanus") #Labels the tips of the phylogeny with names
+
+cat("=== Hominin Phylogeny ===\n")
+print(hominin_tree)
 
 cat("Number of tips:", Ntip(hominin_tree), "\n")
 cat("Number of internal nodes:", Nnode(hominin_tree), "\n")
 cat("Tip labels:", hominin_tree$tip.label, "\n")
 cat("Total tree length (sum of branches):", sum(hominin_tree$edge.length), "\n")
-cat("Tips:", Ntip(hominin_tree), "  Internal nodes:", Nnode(hominin_tree, "\n"))
 
-#Plot phylogeny
-cat("=== Hominin Phylogeny ===\n")
-print(hominin_tree)
-plot(hominin_tree, main = "Simulated Hominin Phylogeny", edge.width = 2, cex = 1.2)
-axisPhylo()
+#Plot the tree
+plot(hominin_tree,
+     main = "Australopithecus Phylogeny",
+     edge.width = 2,
+     cex = 1.1)
+axisPhylo()#Adds a time axis in branch-length units (Ma)
 ```
 
 # ============================================================
-# SECTION 2: SIMULATE MORPHOLOGICAL TRAIT EVOLUTION
+# SECTION 2: SIMULATE CONTINUOUS TRAIT EVOLUTION (phytools)
 # ============================================================
 ```{r}
-cont_trait_names <- c("M1_BL", "M1_MD", "M2_BL", "M2_MD", "P4_BL")
+cont_trait_names <- c("M1_BL", "M1_MD", "M2_BL", "M2_MD", "P4_BL") #Makes continuous trait dataframe
 n_cont <- length(cont_trait_names)
 
 species_means <- matrix(
@@ -54,7 +69,7 @@ species_means <- matrix(
 )
 
 for (i in seq_len(n_cont)) {
-  sim_result <- fastBM(hominin_tree, sig2 = 0.5, nsim = 1)
+  sim_result <- fastBM(hominin_tree, sig2 = 0.5, nsim = 1) #Brownian motion
   species_means[, i] <- sim_result[hominin_tree$tip.label]
 }
 
@@ -66,10 +81,10 @@ print(round(species_means, 3))
 # SECTION 2b: SIMULATE DISCRETE TRAIT EVOLUTION (phytools Mk)
 # ============================================================
 ```{r}
-disc_trait_names <- c("sagittal_crest", "malar_notch","nasal_sill", "supraorbital_torus")
+disc_trait_names <- c("sagittal_crest", "malar_notch", "nasal_sill", "supraorbital_torus") #4 binary discrete characters (e.g., sagittal crest present/absent, malar notch morphology, nasal sill, supraorbital torus form).
 n_disc <- length(disc_trait_names)
 
-# Transition rate matrix Q for 2-state Mk model
+#Transition rate matrix Q for 2-state Mk model; Each evolves under a symmetric Mk model along the same tree.
 Q_mk <- matrix(c(-0.5, 0.5, 0.5, -0.5), 2, 2,
                dimnames = list(c("0","1"), c("0","1")))
 
@@ -80,10 +95,10 @@ species_disc <- matrix(
 )
 
 for (j in seq_len(n_disc)) {
-  sim_disc <- sim.Mk(hominin_tree, Q = Q_mk, nsim = 1)
-  
-  #sim.Mk returns named vector of tip states as character
-  species_disc[, j] <- as.integer(sim_disc[hominin_tree$tip.label])
+  states <- as.integer(sim_disc[hominin_tree$tip.label])
+  states <- states - 1L   # convert 1/2 indexing to 0/1
+  states[is.na(states)] <- sample(0:1, sum(is.na(states)), replace = TRUE)
+  species_disc[, j] <- states
 }
 
 cat("\n=== Simulated Species Discrete Trait States ===\n")
@@ -91,27 +106,24 @@ print(species_disc)
 ```
 
 # ============================================================
-# SECTION 3: SAMPLE FOSSIL "SPECIMENS" FROM SPECIES
+# SECTION 3: SAMPLE FOSSIL SPECIMENS
 # ============================================================
 ```{r}
 Sigma_w <- matrix(0.15, n_cont, n_cont)
 diag(Sigma_w) <- 0.4
-dimorphism_offset  <- c(0.3, 0.2, 0.4, 0.1, 0.2)
-
-#Discrete trait error rate: probability a specimen's discrete
-#state differs from its species modal state (preservational noise)
-disc_error_rate <- 0.10
+dimorphism_offset <- c(0.3, 0.2, 0.4, 0.1, 0.2)
+disc_error_rate <- 0.10 #Discrete trait error rate: probability a specimen's discrete state differs from its species modal state (preservational noise)
 
 sample_sizes <- c("P. robustus" = 8, "A. afarensis" = 15, "A. africanus" = 10)
 
 specimen_list <- list()
 
 for (taxon in hominin_tree$tip.label) {
-  n   <- sample_sizes[taxon]
+  n <- as.integer(sample_sizes[taxon])
   mu  <- species_means[taxon, ]
   sex <- sample(c("M", "F"), n, replace = TRUE)
 
-  #Continuous traits: multivariate (rmvnorm) + sexual dimorphism
+  # --- Continuous traits ---
   cont_mat <- t(sapply(sex, function(s) {
     offset <- if (s == "M") dimorphism_offset else rep(0, n_cont)
     rmvnorm(1, mean = mu + offset, sigma = Sigma_w)
@@ -140,27 +152,43 @@ for (taxon in hominin_tree$tip.label) {
 all_specimens <- do.call(rbind, specimen_list)
 rownames(all_specimens) <- NULL
 
+# do.call(rbind) can silently coerce factor columns back to integers.
+# Re-encode discrete columns as factors with EXPLICIT levels = c(0,1)
+# so that daisy() never encounters a column with only one observed level.
+for (tr in disc_trait_names) {
+  all_specimens[[tr]] <- factor(all_specimens[[tr]], levels = c(0, 1))
+}
+
 cat(sprintf("\nTotal specimens: %d\n", nrow(all_specimens)))
 cat("\n=== Specimen Data (first 6 rows) ===\n")
 print(head(all_specimens))
 ```
-
 # ============================================================
-# SECTION 4: HYBRID DISTANCE FUNCTION
+# SECTION 4: COMBINED DISTANCE FUNCTION
+# ============================================================
+#   D_combined(i, j) = α * D_maha_scaled(i, j) + (1 - α) * D_gower(i, j)
+#
+# Where:
+#   D_maha_scaled  = Mahalanobis distance on continuous traits,
+#                    scaled to [0,1] over the full pairwise matrix
+#   D_gower        = Gower distance on discrete traits (already in [0,1])
+#   α              = empirically optimized weight (default 0.65)
+#
+# The function returns a full n×n distance matrix.
 # ============================================================
 ```{r}
-compute_hybrid_dist <- function(specimens,
+compute_combined_dist <- function(specimens,
                                 cont_cols,
                                 disc_cols,
                                 alpha = 0.65) {
 
   n <- nrow(specimens)
 
-  # --- Mahalanobis distance on continuous traits ---
-  cont_data <- as.matrix(specimens[, cont_cols])
-  # Pool covariance from within-group variance of the continuous block
-  S <- cov(cont_data)
-  # Add small ridge to ensure invertibility (handles near-singular S)
+  cont_data <- as.matrix(specimens[, cont_cols]) #Mahalanobis distance on continuous traits
+ 
+  S <- cov(cont_data) #Pool covariance from within-group variance of the continuous block
+  
+  #Add small ridge to ensure invertibility (handles near-singular S)
   S_reg <- S + diag(1e-6, ncol(S))
   S_inv <- solve(S_reg)
 
@@ -173,23 +201,36 @@ compute_hybrid_dist <- function(specimens,
       maha_mat[j, i] <- d
     }
   }
-  # Scale to [0, 1]
+  
+  #Scale to [0, 1]
   maha_max <- max(maha_mat)
   if (maha_max > 0) maha_scaled <- maha_mat / maha_max else maha_scaled <- maha_mat
 
-  # --- Gower distance on discrete traits ---
+  #Gower distance on discrete traits
   disc_data <- specimens[, disc_cols, drop = FALSE]
-  # Ensure factors
+
+  #Always re-encode with explicit levels = c(0,1). Without this, a column that only contains 0s or only 1s in a small sample will have inferred levels c(0) or c(1), which causes daisy() to return NA for all pairs involving that column.
   disc_data[] <- lapply(disc_data, function(x) {
-    if (!is.factor(x)) factor(x) else x
+    factor(as.integer(as.character(x)), levels = c(0, 1))
   })
+  
+  #Diagnostic: warn if any NAs appear after factor conversion
+  if (any(is.na(unlist(disc_data)))) {
+    warning("NA values detected in discrete data before daisy() — check factor encoding.")
+  }
   gower_dist <- as.matrix(daisy(disc_data, metric = "gower"))
+  
+  #Replace any residual NAs in gower_dist with 0.5 (maximum uncertainty) so a single bad column does not poison the entire distance matrix.
+  if (any(is.na(gower_dist))) {
+    warning("NA values in Gower distance matrix — replacing with 0.5.")
+    gower_dist[is.na(gower_dist)] <- 0.5
+  }
 
-  # --- Weighted linear combination ---
-  hybrid_mat <- alpha * maha_scaled + (1 - alpha) * gower_dist
+  #Weighted linear combination 
+  combined_mat <- alpha * maha_scaled + (1 - alpha) * gower_dist
 
-  # Return as dist object
-  as.dist(hybrid_mat)
+  #Return as dist object
+  as.dist(combined_mat)
 }
 ```
 
@@ -197,17 +238,19 @@ compute_hybrid_dist <- function(specimens,
 # SECTION 4b: OPTIMIZE α ON SIMULATED GROUND TRUTH
 # ============================================================
 ```{r}
+#Sweep α from 0 to 1; for each value cluster with PAM (Partitioning Around Medoids, works on precomputed distances) and score with ARI against true labels. This demonstrates how α ≈ 0.65 can be justified empirically.
+
 true_labels <- as.integer(factor(all_specimens$taxon,
                                   levels = hominin_tree$tip.label))
 
-cat("\n=== Optimizing alpha (hybrid weight) ===\n")
+cat("\n=== Optimizing alpha (combined weight) ===\n")
 
 alpha_grid <- seq(0, 1, by = 0.05)
 alpha_aris <- numeric(length(alpha_grid))
 
 for (k in seq_along(alpha_grid)) {
   a   <- alpha_grid[k]
-  D   <- compute_hybrid_dist(all_specimens, cont_trait_names,
+  D   <- compute_combined_dist(all_specimens, cont_trait_names,
                               disc_trait_names, alpha = a)
   pam_fit       <- pam(D, k = 3, diss = TRUE)
   alpha_aris[k] <- adjustedRandIndex(pam_fit$clustering, true_labels)
@@ -225,7 +268,7 @@ cat(sprintf("  Best alpha: %.2f  (ARI = %.3f)\n",
 ```{r}
 evaluate <- function(predicted, true) adjustedRandIndex(predicted, true)
 
-# --- Protocol A: Sequential (Euclidean, mimics anchoring bias) ---
+#Protocol A: Sequential (Euclidean, mimics anchoring bias)
 sequential_classify <- function(specimens, discovery_order,
                                  seed_size = 6,
                                  new_group_threshold = 3.5) {
@@ -265,16 +308,16 @@ sequential_classify <- function(specimens, discovery_order,
   result
 }
 
-# --- Protocol B: Simultaneous GMM (continuous only, de novo) ---
+#Protocol B: Simultaneous GMM (continuous only, de novo) 
 simultaneous_classify <- function(specimens, max_groups = 6) {
   trait_data <- as.matrix(specimens[, cont_trait_names])
   fit        <- Mclust(trait_data, G = 2:max_groups, verbose = FALSE)
   fit$classification
 }
 
-# --- Protocol C: Hybrid distance + PAM (continuous + discrete) ---
-hybrid_classify <- function(specimens, n_groups = 3, alpha = 0.65) {
-  D       <- compute_hybrid_dist(specimens, cont_trait_names,
+#Protocol C: Combined distance + PAM (continuous + discrete) 
+combined_classify <- function(specimens, n_groups = 3, alpha = 0.65) {
+  D       <- compute_combined_dist(specimens, cont_trait_names,
                                   disc_trait_names, alpha = alpha)
   pam_fit <- pam(D, k = n_groups, diss = TRUE)
   pam_fit$clustering
@@ -290,7 +333,7 @@ discovery_orders <- lapply(seq_len(n_orderings), function(i) sample(nrow(all_spe
 
 cat("\n=== Running all three protocols ===\n\n")
 
-# Protocol A — Sequential (5 discovery orders)
+#Protocol A — Sequential (5 discovery orders)
 seq_results <- lapply(seq_along(discovery_orders), function(i) {
   assn  <- sequential_classify(all_specimens, discovery_orders[[i]])
   ari   <- evaluate(assn, true_labels)
@@ -304,7 +347,7 @@ for (res in seq_results) {
               res$ordering, res$n_groups, res$ari))
 }
 
-# Protocol B — Simultaneous GMM
+#Protocol B — Simultaneous GMM
 simult_assn    <- simultaneous_classify(all_specimens)
 simult_ari     <- evaluate(simult_assn, true_labels)
 simult_n_grp   <- length(unique(simult_assn))
@@ -312,67 +355,128 @@ simult_n_grp   <- length(unique(simult_assn))
 cat(sprintf("\nSIMULTANEOUS (GMM) | Groups: %d | ARI: %.3f\n",
             simult_n_grp, simult_ari))
 
-# Protocol C — Hybrid distance PAM (using best_alpha from optimization)
-hybrid_assn  <- hybrid_classify(all_specimens, n_groups = 3, alpha = best_alpha)
-hybrid_ari   <- evaluate(hybrid_assn, true_labels)
-hybrid_n_grp <- length(unique(hybrid_assn))
+#Protocol C — Combined distance PAM (using best_alpha from optimization)
+combined_assn  <- combined_classify(all_specimens, n_groups = 3, alpha = best_alpha)
+combined_ari   <- evaluate(combined_assn, true_labels)
+combined_n_grp <- length(unique(combined_assn))
 
-cat(sprintf("HYBRID (α = %.2f) | Groups: %d | ARI: %.3f\n",
-            best_alpha, hybrid_n_grp, hybrid_ari))
+cat(sprintf("COMBINED (α = %.2f) | Groups: %d | ARI: %.3f\n",
+            best_alpha, combined_n_grp, combined_ari))
 
-# Summary table
+#Summary table
 seq_aris <- sapply(seq_results, `[[`, "ari")
 cat("\n--- Summary ---\n")
 cat(sprintf("Sequential   mean ARI: %.3f  SD: %.3f\n", mean(seq_aris), sd(seq_aris)))
 cat(sprintf("Simultaneous ARI:      %.3f\n", simult_ari))
-cat(sprintf("Hybrid       ARI:      %.3f  (alpha = %.2f)\n", hybrid_ari, best_alpha))
+cat(sprintf("Combined       ARI:      %.3f  (alpha = %.2f)\n", combined_ari, best_alpha))
 ```
 
 # ============================================================
 # VISUALIZATION — 4-panel figure
 # ============================================================
 ```{r}
-pca         <- prcomp(all_specimens[, cont_trait_names], scale. = TRUE)
-pc_scores   <- as.data.frame(pca$x[, 1:2])
-pc_scores$true_taxon    <- all_specimens$taxon
-pc_scores$simult_group  <- factor(simult_assn)
-pc_scores$seq_group     <- factor(seq_results[[1]]$assignments)
-pc_scores$hybrid_group  <- factor(hybrid_assn)
+pca <- prcomp(all_specimens[, cont_trait_names], scale. = TRUE)
+pc_scores <- as.data.frame(pca$x[, 1:2])
+pc_scores$true_taxon <- all_specimens$taxon
+pc_scores$simult_group <- factor(simult_assn)
+pc_scores$seq_group <- factor(seq_results[[1]]$assignments)
+pc_scores$combined_group <- factor(combined_assn)
 
-taxon_cols <- c("Au. robustus"  = "#E74C3C",
-                "Au. afarensis" = "#3498DB",
-                "Au. africanus" = "#2ECC71")
+# Shared theme
+theme_hominin <- theme_minimal(base_size = 13) +
+  theme(
+    plot.title    = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5, color = "grey40"),
+    legend.position = "right",
+    panel.grid.minor = element_blank()
+  )
+
+#Panel 1: True species
+plot_true <- ggplot(pc_scores, aes(x = PC1, y = PC2, color = true_taxon)) +
+  geom_point(size = 3, alpha = 0.85) +
+  scale_color_manual(values = taxon_cols, name = "Species") +
+  labs(title = "True Species",
+       x = "PC1", y = "PC2") +
+  theme_hominin
+
+#Panel 2: Sequential (order 1)
+plot_sequential <- ggplot(pc_scores, aes(x = PC1, y = PC2, color = seq_group)) +
+  geom_point(size = 3, alpha = 0.85) +
+  scale_color_brewer(palette = "Set1", name = "Group") +
+  labs(title = "Sequential Classification (Order 1)",
+       subtitle = sprintf("Groups = %d   ARI = %.2f",
+                          seq_results[[1]]$n_groups, seq_results[[1]]$ari),
+       x = "PC1", y = "PC2") +
+  theme_hominin
+
+#Panel 3: Simultaneous GMM
+plot_gmm <- ggplot(pc_scores, aes(x = PC1, y = PC2, color = simult_group)) +
+  geom_point(size = 3, alpha = 0.85) +
+  scale_color_brewer(palette = "Set1", name = "Group") +
+  labs(title = "Simultaneous GMM",
+       subtitle = sprintf("Groups = %d   ARI = %.2f", simult_n_grp, simult_ari),
+       x = "PC1", y = "PC2") +
+  theme_hominin
+
+#Panel 4: Combined distance PAM
+plot_combined <- ggplot(pc_scores, aes(x = PC1, y = PC2, color = combined_group)) +
+  geom_point(size = 3, alpha = 0.85) +
+  scale_color_brewer(palette = "Set1", name = "Group") +
+  labs(title = sprintf("Combined PAM (α = %.2f)", best_alpha),
+       subtitle = sprintf("Groups = %d   ARI = %.2f", combined_n_grp, combined_ari),
+       x = "PC1", y = "PC2") +
+  theme_hominin
+
+#Panel 5: Alpha sensitivity
+plot_alpha <- ggplot(data.frame(alpha = alpha_grid, ARI = alpha_aris),
+                     aes(x = alpha, y = ARI)) +
+  geom_line(color = "#8E44AD", linewidth = 0.8) +
+  geom_point(color = "#8E44AD", size = 2.5) +
+  geom_vline(xintercept = best_alpha, linetype = "dashed", color = "red") +
+  annotate("text", x = best_alpha + 0.03, y = min(alpha_aris) + 0.05,
+           label = sprintf("α = %.2f", best_alpha),
+           color = "red", hjust = 0, size = 3.5) +
+  labs(title = "Combined Distance: ARI vs. Alpha",
+       x = expression(alpha ~ "(Mahalanobis weight)"),
+       y = "Adjusted Rand Index") +
+  theme_hominin
+
+#===============================================================
+taxon_cols <- c("P. robustus"  = "#E74C3C",
+                "A. afarensis" = "#3498DB",
+                "A. africanus" = "#2ECC71")
 
 par(mfrow = c(2, 2), mar = c(4, 4, 3.5, 1.5))
 
-# Panel 1: True species
+#Panel 1: True species
 plot(pc_scores$PC1, pc_scores$PC2,
      col = taxon_cols[pc_scores$true_taxon], pch = 19, cex = 1.4,
      xlab = "PC1", ylab = "PC2", main = "TRUE SPECIES")
 legend("topright", legend = names(taxon_cols),
        col = taxon_cols, pch = 19, cex = 0.75, bty = "n")
 
-# Panel 2: Sequential (order 1)
+#Panel 2: Sequential (order 1)
 plot(pc_scores$PC1, pc_scores$PC2,
      col = as.integer(pc_scores$seq_group) + 1, pch = 19, cex = 1.4,
      xlab = "PC1", ylab = "PC2",
      main = sprintf("SEQUENTIAL (Order 1)\nGroups=%d  ARI=%.2f",
                     seq_results[[1]]$n_groups, seq_results[[1]]$ari))
 
-# Panel 3: Simultaneous GMM
+#Panel 3: Simultaneous GMM
 plot(pc_scores$PC1, pc_scores$PC2,
      col = as.integer(pc_scores$simult_group) + 1, pch = 19, cex = 1.4,
      xlab = "PC1", ylab = "PC2",
      main = sprintf("SIMULTANEOUS GMM\nGroups=%d  ARI=%.2f",
                     simult_n_grp, simult_ari))
 
-# Panel 4: Hybrid distance PAM
+#Panel 4: Combined distance PAM
 plot(pc_scores$PC1, pc_scores$PC2,
-     col = as.integer(pc_scores$hybrid_group) + 1, pch = 19, cex = 1.4,
+     col = as.integer(pc_scores$combined_group) + 1, pch = 19, cex = 1.4,
      xlab = "PC1", ylab = "PC2",
-     main = sprintf("HYBRID (α=%.2f)\nGroups=%d  ARI=%.2f",
-                    best_alpha, hybrid_n_grp, hybrid_ari))
+     main = sprintf("COMBINED (α=%.2f)\nGroups=%d  ARI=%.2f",
+                    best_alpha, combined_n_grp, combined_ari))
 ```
+
 
 # ============================================================
 # BONUS: alpha sensitivity plot
@@ -382,14 +486,14 @@ dev.new()
 plot(alpha_grid, alpha_aris, type = "b", pch = 19, col = "#8E44AD",
      xlab = expression(alpha ~ "(Mahalanobis weight)"),
      ylab = "Adjusted Rand Index",
-     main = "Hybrid Distance: ARI vs. Alpha")
+     main = "Combined Distance: ARI vs. Alpha")
 abline(v = best_alpha, lty = 2, col = "red")
 text(best_alpha + 0.03, min(alpha_aris) + 0.05,
      sprintf("α = %.2f", best_alpha), col = "red", adj = 0)
 
 cat("\n=== Simulation complete ===\n")
 cat(sprintf(
-  "Best alpha: %.2f | Hybrid ARI: %.3f | Sequential mean ARI: %.3f | Simultaneous ARI: %.3f\n",
-  best_alpha, hybrid_ari, mean(seq_aris), simult_ari
+  "Best alpha: %.2f | Combined ARI: %.3f | Sequential mean ARI: %.3f | Simultaneous ARI: %.3f\n",
+  best_alpha, combined_ari, mean(seq_aris), simult_ari
 ))
 ```

@@ -1,0 +1,674 @@
+# ================================================================
+# Hominin Alpha Taxonomy — Revised Taxonomy Derivation
+# taxonomy_derivation.R
+# ================================================================
+#
+# PURPOSE:
+# This script takes the output of hominin_simulation_v3.R and translates the 
+# combined PAM clustering results into a formal revised taxonomy. It produces:
+#
+#   SECTION 1:  Specimen-level taxonomy table
+#               (cluster assignment, silhouette score, status,
+#                current vs. revised assignment)
+#
+#   SECTION 2:  Taxon characterization
+#               (medoid identification, diagnostic trait profiles,
+#                within-cluster morphological envelopes)
+#
+#   SECTION 3:  Nomenclatural linkage
+#               (holotype-based name assignment, synonymy table,
+#                flagging of specimens requiring new names)
+#
+#   SECTION 4:  Confidence-stratified hypodigm
+#               (core members, borderline members, outliers)
+#
+#   SECTION 5:  Simulation calibration check
+#               (placing the assemblage in the sensitivity sweep
+#                parameter space to contextualize reliability)
+#
+#   SECTION 6:  Taxonomic revision report
+#               (console-printed and exportable summary)
+#
+#   SECTION 7:  All visualizations
+#               (taxonomy map, silhouette portrait, trait envelopes,
+#                calibration plot, hypodigm table plot)
+#
+# DEPENDENCIES:
+#   Run hominin_simulation_v3.R first in the same R session,
+#   OR source it here:
+#   source("hominin_simulation_v3.R")
+#
+# Additional packages needed:
+# install.packages(c("ggplot2","ggrepel","patchwork","cluster"))
+# ================================================================
+
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+library(cluster)
+
+# ================================================================
+# PREFLIGHT CHECK
+# ================================================================
+# Verify that all required objects from v3 are present.
+# If not, stop with a clear message rather than a cryptic error.
+
+required_objects <- c(
+  "all_specimens", "hybrid_result", "best_alpha",
+  "cont_trait_names", "disc_trait_names",
+  "hominin_tree", "true_labels",
+  "sweep_results", "pca", "pc_scores"
+)
+
+missing <- required_objects[!sapply(required_objects, exists)]
+if (length(missing) > 0) {
+  stop(paste(
+    "The following objects are missing. Run hominin_simulation_v3.R first:\n",
+    paste(missing, collapse = ", ")
+  ))
+}
+cat("Preflight check passed — all v3 objects present.\n\n")
+
+# ================================================================
+# SECTION 1: SPECIMEN-LEVEL TAXONOMY TABLE
+# ================================================================
+# Build the master taxonomy data frame. One row per specimen.
+# Columns:
+#   specimen_id     — sequential identifier (S001, S002, ...)
+#   true_taxon      — ground truth (simulation only; unknown in real analysis)
+#   current_taxon   — the existing taxonomic assignment (here = true_taxon,
+#                     simulating what a traditional worker would have assigned)
+#   hybrid_cluster  — integer cluster label from hybrid PAM
+#   silhouette_width — s(i): how well-classified this specimen is (-1 to +1)
+#   membership_status — "Core" / "Borderline" / "Outlier" based on sil thresholds
+#   revised_taxon   — taxon name assigned after nomenclatural linkage (Section 3)
+
+n_spec <- nrow(all_specimens)
+
+# Compute full silhouette object (all specimens, not just summary)
+D_final    <- compute_hybrid_dist(all_specimens, cont_trait_names,
+                                   disc_trait_names, alpha = best_alpha)
+sil_full   <- silhouette(hybrid_result$clustering, D_final)
+sil_values <- sil_full[, "sil_width"]
+
+# Silhouette thresholds for membership status
+# Core:        sil >= 0.50  — specimen strongly matches its cluster
+# Borderline:  0.20 <= sil < 0.50 — moderate confidence
+# Outlier:     sil < 0.20   — poorly classified; flagged for review
+SIL_CORE        <- 0.50
+SIL_BORDERLINE  <- 0.20
+
+membership_status <- ifelse(
+  sil_values >= SIL_CORE, "Core",
+  ifelse(sil_values >= SIL_BORDERLINE, "Borderline", "Outlier")
+)
+
+taxonomy_table <- data.frame(
+  specimen_id      = sprintf("S%03d", seq_len(n_spec)),
+  true_taxon       = all_specimens$taxon,
+  current_taxon    = all_specimens$taxon,   # in simulation: same as truth
+  sex              = all_specimens$sex,
+  hybrid_cluster   = hybrid_result$clustering,
+  silhouette_width = round(sil_values, 4),
+  membership_status = membership_status,
+  revised_taxon    = NA_character_,         # filled in Section 3
+  stringsAsFactors = FALSE
+)
+
+cat("=== Specimen Taxonomy Table (first 10 rows) ===\n")
+print(taxonomy_table[1:10, c("specimen_id","current_taxon","hybrid_cluster",
+                               "silhouette_width","membership_status")])
+
+cat(sprintf("\nMembership status breakdown:\n"))
+print(table(taxonomy_table$membership_status))
+
+# ================================================================
+# SECTION 2: TAXON CHARACTERIZATION
+# ================================================================
+# For each recovered cluster, characterize its morphological
+# profile in terms of:
+#   (a) Medoid specimen — the PAM-selected representative
+#   (b) Continuous trait means and ranges (morphological envelope)
+#   (c) Modal discrete character states
+#   (d) Within-cluster silhouette distribution
+
+k_recovered <- hybrid_result$k_selected
+medoid_idx  <- hybrid_result$medoids
+
+cat("\n=== Taxon Characterization ===\n")
+cat(sprintf("Hybrid PAM recovered k = %d clusters\n\n", k_recovered))
+
+# Initialize characterization list
+taxon_chars <- vector("list", k_recovered)
+
+for (cl in seq_len(k_recovered)) {
+
+  members    <- which(taxonomy_table$hybrid_cluster == cl)
+  core_members <- which(taxonomy_table$hybrid_cluster == cl &
+                          taxonomy_table$membership_status == "Core")
+  medoid_row <- medoid_idx[cl]
+
+  # Continuous trait envelope (mean ± SD across all members)
+  cont_data_cl <- all_specimens[members, cont_trait_names]
+  trait_means  <- colMeans(cont_data_cl)
+  trait_sds    <- apply(cont_data_cl, 2, sd)
+  trait_min    <- apply(cont_data_cl, 2, min)
+  trait_max    <- apply(cont_data_cl, 2, max)
+
+  # Modal discrete states (most common state across members)
+  disc_data_cl  <- all_specimens[members, disc_trait_names]
+  modal_states  <- sapply(disc_data_cl, function(x) {
+    tab <- table(as.integer(as.character(x)))
+    as.integer(names(tab)[which.max(tab)])
+  })
+
+  # Silhouette distribution for this cluster
+  sil_cl <- sil_values[members]
+
+  taxon_chars[[cl]] <- list(
+    cluster        = cl,
+    n_specimens    = length(members),
+    n_core         = length(core_members),
+    medoid_row     = medoid_row,
+    medoid_id      = taxonomy_table$specimen_id[medoid_row],
+    trait_means    = trait_means,
+    trait_sds      = trait_sds,
+    trait_min      = trait_min,
+    trait_max      = trait_max,
+    modal_disc     = modal_states,
+    sil_mean       = mean(sil_cl),
+    sil_min        = min(sil_cl),
+    members        = members
+  )
+
+  cat(sprintf("--- Cluster %d ---\n", cl))
+  cat(sprintf("  Specimens: %d total, %d core (sil >= %.2f)\n",
+              length(members), length(core_members), SIL_CORE))
+  cat(sprintf("  Medoid: %s (specimen row %d)\n",
+              taxonomy_table$specimen_id[medoid_row], medoid_row))
+  cat(sprintf("  Mean silhouette: %.3f  (min: %.3f)\n",
+              mean(sil_cl), min(sil_cl)))
+  cat("  Trait means (±SD):\n")
+  for (tr in cont_trait_names) {
+    cat(sprintf("    %-20s %.3f ± %.3f  [%.3f – %.3f]\n",
+                tr, trait_means[tr], trait_sds[tr],
+                trait_min[tr], trait_max[tr]))
+  }
+  cat("  Modal discrete states (first 8 chars):\n")
+  cat("   ", paste(names(modal_states[1:8]), modal_states[1:8], sep="=", collapse="  "), "\n\n")
+}
+
+# ================================================================
+# SECTION 3: NOMENCLATURAL LINKAGE
+# ================================================================
+# Assign formal taxon names to recovered clusters based on which
+# existing named taxon's specimens are predominantly in each cluster.
+#
+# Rule: A cluster inherits the name of whichever current taxon
+# contributes the plurality of its members. This simulates the
+# holotype rule — the cluster containing the holotype of a named
+# species inherits that name.
+#
+# Clusters where no existing name clearly applies (plurality < 60%)
+# are flagged as potentially novel taxa requiring new names.
+#
+# In a real analysis: substitute the holotype specimen ID for each
+# named taxon and check which cluster it falls in, rather than
+# using plurality assignment.
+
+cat("=== Nomenclatural Linkage ===\n\n")
+
+# Plurality assignment: for each cluster, find the dominant current taxon
+cluster_name_map <- character(k_recovered)
+cluster_plurality <- numeric(k_recovered)
+
+for (cl in seq_len(k_recovered)) {
+  members    <- which(taxonomy_table$hybrid_cluster == cl)
+  taxon_counts <- table(taxonomy_table$current_taxon[members])
+  dominant   <- names(taxon_counts)[which.max(taxon_counts)]
+  plurality  <- max(taxon_counts) / length(members)
+
+  cluster_name_map[cl] <- dominant
+  cluster_plurality[cl] <- plurality
+
+  cat(sprintf("Cluster %d → '%s' (%.0f%% of members)\n",
+              cl, dominant, plurality * 100))
+  print(taxon_counts)
+
+  if (plurality < 0.60) {
+    cat(sprintf("  *** WARNING: Low plurality (%.0f%%) — this cluster may represent\n",
+                plurality * 100))
+    cat("      a novel taxon or a merged pair. Consider new name.\n")
+  }
+  cat("\n")
+}
+
+# Fill revised_taxon in taxonomy table
+taxonomy_table$revised_taxon <- cluster_name_map[taxonomy_table$hybrid_cluster]
+
+# Identify specimens whose revised assignment differs from current
+taxonomy_table$assignment_changed <- (taxonomy_table$revised_taxon !=
+                                        taxonomy_table$current_taxon)
+
+n_changed <- sum(taxonomy_table$assignment_changed)
+cat(sprintf("Specimens with changed assignment: %d / %d (%.1f%%)\n\n",
+            n_changed, n_spec, 100 * n_changed / n_spec))
+
+# Synonymy assessment: if two clusters map to the same name,
+# one may be a junior synonym or represent genuine splitting
+name_freq <- table(cluster_name_map)
+for (nm in names(name_freq)) {
+  if (name_freq[nm] > 1) {
+    cat(sprintf("*** '%s' assigned to %d clusters — possible oversplitting\n",
+                nm, name_freq[nm]))
+    cat("    Consider merging or erecting new names for the minority cluster.\n\n")
+  }
+}
+
+# Build formal synonymy / revision table
+revision_table <- data.frame(
+  cluster       = seq_len(k_recovered),
+  n_specimens   = sapply(taxon_chars, `[[`, "n_specimens"),
+  n_core        = sapply(taxon_chars, `[[`, "n_core"),
+  medoid_id     = sapply(taxon_chars, `[[`, "medoid_id"),
+  assigned_name = cluster_name_map,
+  plurality_pct = round(cluster_plurality * 100, 1),
+  mean_sil      = round(sapply(taxon_chars, `[[`, "sil_mean"), 3),
+  name_status   = ifelse(cluster_plurality >= 0.60, "Confirmed", "Requires review"),
+  stringsAsFactors = FALSE
+)
+
+cat("=== Formal Revision Table ===\n")
+print(revision_table)
+
+# ================================================================
+# SECTION 4: CONFIDENCE-STRATIFIED HYPODIGM
+# ================================================================
+# The revised hypodigm for each taxon is stratified into three tiers
+# based on silhouette width, providing explicit confidence levels
+# for every specimen assignment.
+#
+# TIER 1 — Core hypodigm (sil >= 0.50):
+#   Specimens that are unambiguously members of this taxon.
+#   These should be used for morphometric characterization.
+#
+# TIER 2 — Extended hypodigm (0.20 <= sil < 0.50):
+#   Specimens that are probably members but show some affinity
+#   to a neighboring cluster. Morphologically intermediate.
+#   These are the boundary specimens that have historically
+#   driven lumper/splitter disputes.
+#
+# TIER 3 — Taxonomically uncertain (sil < 0.20):
+#   Specimens that the method cannot confidently assign.
+#   These should be explicitly listed as incertae sedis
+#   pending additional data (better preservation, new material).
+
+cat("\n=== Confidence-Stratified Hypodigm ===\n\n")
+
+for (cl in seq_len(k_recovered)) {
+  taxon_name <- revision_table$assigned_name[cl]
+  cl_rows    <- which(taxonomy_table$hybrid_cluster == cl)
+  cl_df      <- taxonomy_table[cl_rows, ]
+
+  core_df   <- cl_df[cl_df$membership_status == "Core", ]
+  border_df <- cl_df[cl_df$membership_status == "Borderline", ]
+  outlier_df <- cl_df[cl_df$membership_status == "Outlier", ]
+
+  cat(sprintf("=== %s (Cluster %d) ===\n", taxon_name, cl))
+  cat(sprintf("  TIER 1 — Core hypodigm (%d specimens, sil >= %.2f):\n",
+              nrow(core_df), SIL_CORE))
+  if (nrow(core_df) > 0) {
+    cat("   ", paste(sprintf("%s[sil=%.2f]",
+                              core_df$specimen_id,
+                              core_df$silhouette_width),
+                      collapse = "  "), "\n")
+  }
+
+  cat(sprintf("  TIER 2 — Extended hypodigm (%d specimens, %.2f <= sil < %.2f):\n",
+              nrow(border_df), SIL_BORDERLINE, SIL_CORE))
+  if (nrow(border_df) > 0) {
+    cat("   ", paste(sprintf("%s[sil=%.2f]",
+                              border_df$specimen_id,
+                              border_df$silhouette_width),
+                      collapse = "  "), "\n")
+  }
+
+  cat(sprintf("  TIER 3 — Incertae sedis (%d specimens, sil < %.2f):\n",
+              nrow(outlier_df), SIL_BORDERLINE))
+  if (nrow(outlier_df) > 0) {
+    cat("   ", paste(sprintf("%s[sil=%.2f]",
+                              outlier_df$specimen_id,
+                              outlier_df$silhouette_width),
+                      collapse = "  "), "\n")
+  }
+  cat("\n")
+}
+
+# ================================================================
+# SECTION 5: SIMULATION CALIBRATION CHECK
+# ================================================================
+# Place this assemblage in the sensitivity sweep parameter space
+# to assess how reliable the hybrid method's results are expected
+# to be under the observed conditions.
+#
+# Empirical parameter estimates:
+#   sig2_empirical: estimated from the ratio of between-cluster
+#     trait variance to within-cluster trait variance
+#   dimorphism_empirical: estimated from the mean size offset
+#     between male and female specimens in the assemblage
+#
+# These are then matched to the nearest parameter combination
+# in the sweep_results table to read off expected performance.
+
+cat("=== Simulation Calibration Check ===\n\n")
+
+# Estimate empirical sig2 proxy:
+# Between-cluster variance / total variance for PC1
+pc1_vals <- pc_scores$PC1
+cluster_means_pc1 <- tapply(pc1_vals, hybrid_result$clustering, mean)
+between_var <- var(cluster_means_pc1)
+total_var   <- var(pc1_vals)
+sig2_proxy  <- between_var / total_var   # ranges ~0 (overlapping) to ~1 (separated)
+
+cat(sprintf("Empirical morphological separation (between/total PC1 variance): %.3f\n",
+            sig2_proxy))
+
+# Estimate empirical dimorphism proxy:
+# Mean PC1 difference between M and F specimens
+male_pc1   <- mean(pc1_vals[all_specimens$sex == "M"])
+female_pc1 <- mean(pc1_vals[all_specimens$sex == "F"])
+dimorph_proxy <- abs(male_pc1 - female_pc1)
+
+cat(sprintf("Empirical dimorphism proxy (|male - female| mean PC1): %.3f\n\n",
+            dimorph_proxy))
+
+# Match to sweep parameter space
+# Find the sweep row with sig2 and dimorph closest to empirical estimates
+sweep_results$sig2_dist    <- abs(sweep_results$sig2 - sig2_proxy)
+sweep_results$dimorph_dist <- abs(sweep_results$dimorph - dimorph_proxy)
+sweep_results$total_dist   <- sweep_results$sig2_dist + sweep_results$dimorph_dist
+best_sweep_row <- which.min(sweep_results$total_dist)
+
+cat("Nearest sweep parameter combination:\n")
+cat(sprintf("  sig2 = %.1f, dimorphism = %.1f\n",
+            sweep_results$sig2[best_sweep_row],
+            sweep_results$dimorph[best_sweep_row]))
+cat(sprintf("  Expected Hybrid ARI:      %.3f\n",
+            sweep_results$hybrid_mean_ari[best_sweep_row]))
+cat(sprintf("  Expected GMM ARI:         %.3f\n",
+            sweep_results$gmm_mean_ari[best_sweep_row]))
+cat(sprintf("  Expected Sequential ARI:  %.3f ± %.3f (anchoring bias)\n",
+            sweep_results$seq_mean_ari[best_sweep_row],
+            sweep_results$seq_sd_ari[best_sweep_row]))
+cat(sprintf("  Expected Hybrid k:        %.1f\n",
+            sweep_results$hybrid_mean_k[best_sweep_row]))
+
+cat("\nCalibration interpretation:\n")
+if (sweep_results$hybrid_mean_ari[best_sweep_row] >= 0.70) {
+  cat("  HIGH CONFIDENCE — Parameter space region shows strong hybrid performance.\n")
+  cat("  Revised taxonomy is likely to be reliable.\n")
+} else if (sweep_results$hybrid_mean_ari[best_sweep_row] >= 0.45) {
+  cat("  MODERATE CONFIDENCE — Parameter space region shows intermediate performance.\n")
+  cat("  Treat borderline and outlier specimens with caution.\n")
+} else {
+  cat("  LOW CONFIDENCE — High morphological overlap or dimorphism degrades performance.\n")
+  cat("  Core-tier specimens only should be used for taxonomic characterization.\n")
+}
+
+# ================================================================
+# SECTION 6: TAXONOMIC REVISION REPORT
+# ================================================================
+# Produce a structured console report summarizing all findings.
+# In a real analysis this would be the basis for the Methods and
+# Results sections of a taxonomic revision paper.
+
+cat("\n")
+cat(rep("=", 65), "\n", sep="")
+cat("TAXONOMIC REVISION REPORT\n")
+cat("Hybrid PAM Simultaneous Classification — Summary\n")
+cat(rep("=", 65), "\n\n", sep="")
+
+cat(sprintf("Total specimens analyzed:     %d\n", n_spec))
+cat(sprintf("Continuous traits used:       %d\n", length(cont_trait_names)))
+cat(sprintf("Discrete characters used:     %d\n", length(disc_trait_names)))
+cat(sprintf("Optimal alpha (Maha weight):  %.2f\n", best_alpha))
+cat(sprintf("k selected by silhouette:     %d\n\n", k_recovered))
+
+cat("RECOVERED TAXA:\n")
+for (cl in seq_len(k_recovered)) {
+  tc <- taxon_chars[[cl]]
+  rr <- revision_table[cl, ]
+  cat(sprintf("\n  %s (Cluster %d)\n", rr$assigned_name, cl))
+  cat(sprintf("  Hypodigm: %d specimens (%d core, %d borderline, %d uncertain)\n",
+              rr$n_specimens,
+              rr$n_core,
+              sum(taxonomy_table$hybrid_cluster == cl &
+                    taxonomy_table$membership_status == "Borderline"),
+              sum(taxonomy_table$hybrid_cluster == cl &
+                    taxonomy_table$membership_status == "Outlier")))
+  cat(sprintf("  Medoid (representative): %s\n", rr$medoid_id))
+  cat(sprintf("  Mean silhouette width:   %.3f\n", rr$mean_sil))
+  cat(sprintf("  Name status:             %s (plurality = %.0f%%)\n",
+              rr$name_status, rr$plurality_pct))
+}
+
+cat(sprintf("\nSPECIMENS WITH CHANGED ASSIGNMENT: %d / %d (%.1f%%)\n",
+            n_changed, n_spec, 100 * n_changed / n_spec))
+
+if (n_changed > 0) {
+  changed_df <- taxonomy_table[taxonomy_table$assignment_changed, ]
+  cat("  Specimen  Current→Revised                Sil    Status\n")
+  for (i in seq_len(nrow(changed_df))) {
+    cat(sprintf("  %-9s %-20s → %-20s  %.3f  %s\n",
+                changed_df$specimen_id[i],
+                changed_df$current_taxon[i],
+                changed_df$revised_taxon[i],
+                changed_df$silhouette_width[i],
+                changed_df$membership_status[i]))
+  }
+}
+
+cat(sprintf("\nCALIBRATION (from sensitivity sweep):\n"))
+cat(sprintf("  Morphological separation proxy: %.3f\n", sig2_proxy))
+cat(sprintf("  Dimorphism proxy:               %.3f\n", dimorph_proxy))
+cat(sprintf("  Expected hybrid ARI at these conditions: %.3f\n",
+            sweep_results$hybrid_mean_ari[best_sweep_row]))
+cat(rep("=", 65), "\n\n", sep="")
+
+# ================================================================
+# SECTION 7: VISUALIZATIONS
+# ================================================================
+
+theme_tax <- theme_minimal(base_size = 13) +
+  theme(plot.title    = element_text(face = "bold", hjust = 0.5, size = 14),
+        plot.subtitle = element_text(hjust = 0.5, color = "grey40", size = 11),
+        legend.position = "right",
+        panel.grid.minor = element_blank())
+
+# --- Plot 1: Taxonomy map ---
+# PCA morphospace showing revised taxonomy with membership status
+tax_map_df <- data.frame(
+  PC1           = pc_scores$PC1,
+  PC2           = pc_scores$PC2,
+  revised_taxon = taxonomy_table$revised_taxon,
+  status        = taxonomy_table$membership_status,
+  specimen_id   = taxonomy_table$specimen_id,
+  sil           = taxonomy_table$silhouette_width,
+  changed       = taxonomy_table$assignment_changed
+)
+
+# Mark medoids
+medoid_df <- tax_map_df[medoid_idx, ]
+
+plot_taxonomy_map <- ggplot(tax_map_df,
+                             aes(x = PC1, y = PC2, color = revised_taxon,
+                                 shape = status, size = status, alpha = status)) +
+  geom_point() +
+  geom_point(data = medoid_df, aes(x = PC1, y = PC2),
+             shape = 8, size = 6, stroke = 1.5, color = "black", inherit.aes = FALSE) +
+  geom_label_repel(data = medoid_df,
+                   aes(x = PC1, y = PC2, label = paste("Medoid\n", specimen_id)),
+                   size = 3, color = "black", fill = "white",
+                   box.padding = 0.5, max.overlaps = 10,
+                   inherit.aes = FALSE) +
+  scale_color_brewer(palette = "Set1", name = "Revised taxon") +
+  scale_shape_manual(values = c("Core" = 19, "Borderline" = 17, "Outlier" = 4),
+                     name = "Membership") +
+  scale_size_manual(values = c("Core" = 3.5, "Borderline" = 2.5, "Outlier" = 2),
+                    name = "Membership") +
+  scale_alpha_manual(values = c("Core" = 0.95, "Borderline" = 0.65, "Outlier" = 0.40),
+                     name = "Membership") +
+  labs(title = "Revised Taxonomy — PCA Morphospace",
+       subtitle = "Stars = medoid (representative) specimen per taxon  |  × = incertae sedis",
+       x = "PC1", y = "PC2") +
+  theme_tax
+
+# --- Plot 2: Changed assignments map ---
+# Highlight which specimens changed assignment from current to revised
+plot_changes <- ggplot(tax_map_df, aes(x = PC1, y = PC2)) +
+  geom_point(data = tax_map_df[!tax_map_df$changed, ],
+             aes(color = revised_taxon), size = 3, alpha = 0.5) +
+  geom_point(data = tax_map_df[tax_map_df$changed, ],
+             aes(color = revised_taxon), size = 5, alpha = 0.95, shape = 18) +
+  geom_label_repel(data = tax_map_df[tax_map_df$changed, ],
+                   aes(label = specimen_id, color = revised_taxon),
+                   size = 2.8, show.legend = FALSE,
+                   box.padding = 0.4, max.overlaps = 20) +
+  scale_color_brewer(palette = "Set1", name = "Revised taxon") +
+  labs(title = "Specimens with Changed Assignment",
+       subtitle = sprintf("%d specimens reassigned (diamonds)  |  grey = unchanged",
+                          sum(tax_map_df$changed)),
+       x = "PC1", y = "PC2") +
+  theme_tax
+
+# --- Plot 3: Silhouette portrait ---
+# Full per-specimen silhouette plot, ordered by cluster then sil width
+sil_df <- data.frame(
+  specimen_id   = taxonomy_table$specimen_id,
+  revised_taxon = taxonomy_table$revised_taxon,
+  sil           = taxonomy_table$silhouette_width,
+  status        = taxonomy_table$membership_status
+)
+sil_df <- sil_df[order(sil_df$revised_taxon, -sil_df$sil), ]
+sil_df$rank <- seq_len(nrow(sil_df))
+
+plot_silhouette_portrait <- ggplot(sil_df, aes(x = rank, y = sil, fill = revised_taxon)) +
+  geom_bar(stat = "identity", width = 0.85) +
+  geom_hline(yintercept = SIL_CORE, linetype = "dashed", color = "black", linewidth = 0.6) +
+  geom_hline(yintercept = SIL_BORDERLINE, linetype = "dotted", color = "grey40", linewidth = 0.6) +
+  geom_hline(yintercept = 0, color = "black", linewidth = 0.4) +
+  annotate("text", x = n_spec * 0.98, y = SIL_CORE + 0.03,
+           label = "Core threshold (0.50)", hjust = 1, size = 3) +
+  annotate("text", x = n_spec * 0.98, y = SIL_BORDERLINE + 0.03,
+           label = "Borderline threshold (0.20)", hjust = 1, size = 3, color = "grey40") +
+  scale_fill_brewer(palette = "Set1", name = "Revised taxon") +
+  scale_y_continuous(limits = c(-0.3, 1.0), breaks = seq(-0.2, 1.0, 0.2)) +
+  labs(title = "Silhouette Portrait — Specimen Confidence",
+       subtitle = "Bar height = silhouette width; bars above 0.50 are core hypodigm members",
+       x = "Specimens (ordered by taxon, then silhouette width)",
+       y = "Silhouette width s(i)") +
+  theme_tax +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+# --- Plot 4: Continuous trait envelopes per revised taxon ---
+# Box-and-whisker for each continuous trait, colored by revised taxon
+cont_long <- reshape(
+  data.frame(
+    revised_taxon = taxonomy_table$revised_taxon,
+    all_specimens[, cont_trait_names]
+  ),
+  varying      = cont_trait_names,
+  v.names      = "value",
+  timevar      = "trait",
+  times        = cont_trait_names,
+  direction    = "long"
+)
+
+plot_trait_envelopes <- ggplot(cont_long, aes(x = revised_taxon, y = value,
+                                               fill = revised_taxon)) +
+  geom_boxplot(alpha = 0.75, outlier.shape = 21, outlier.size = 1.5) +
+  scale_fill_brewer(palette = "Set1", name = "Revised taxon") +
+  facet_wrap(~ trait, scales = "free_y", ncol = 3) +
+  labs(title = "Morphological Envelopes by Revised Taxon",
+       subtitle = "Box = IQR, whiskers = 1.5 × IQR, points = outliers",
+       x = NULL, y = "Trait value (standardized)") +
+  theme_tax +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 9),
+        strip.text = element_text(face = "bold"))
+
+# --- Plot 5: Calibration plot ---
+# Show where the assemblage falls in the sensitivity sweep
+# and what ARI is expected there
+calibration_df <- data.frame(
+  sig2    = sweep_results$sig2,
+  dimorph = sweep_results$dimorph,
+  hybrid_ari = sweep_results$hybrid_mean_ari
+)
+
+plot_calibration <- ggplot(calibration_df, aes(x = factor(sig2), y = factor(dimorph),
+                                                fill = hybrid_ari)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(aes(label = sprintf("%.2f", hybrid_ari)),
+            size = 4, color = "white", fontface = "bold") +
+  geom_point(data = data.frame(
+    sig2 = factor(sweep_results$sig2[best_sweep_row]),
+    dimorph = factor(sweep_results$dimorph[best_sweep_row])
+  ), aes(x = sig2, y = dimorph), shape = 8, size = 8,
+  color = "yellow", stroke = 2, inherit.aes = FALSE) +
+  scale_fill_gradient(low = "#C0392B", high = "#1A5276",
+                      name = "Expected\nHybrid ARI", limits = c(0, 1)) +
+  labs(title = "Calibration: Assemblage in Parameter Space",
+       subtitle = "Star = nearest sweep cell to this assemblage's estimated parameters",
+       x = expression(sigma^2 ~ "(evolutionary rate proxy)"),
+       y = "Dimorphism scale") +
+  theme_tax
+
+# --- Plot 6: Hypodigm table plot ---
+# Visual representation of the stratified hypodigm
+hyp_df <- taxonomy_table[order(taxonomy_table$revised_taxon,
+                                 -taxonomy_table$silhouette_width), ]
+hyp_df$rank <- seq_len(nrow(hyp_df))
+hyp_df$status_num <- ifelse(hyp_df$membership_status == "Core", 3,
+                      ifelse(hyp_df$membership_status == "Borderline", 2, 1))
+
+plot_hypodigm <- ggplot(hyp_df, aes(x = rank, y = revised_taxon,
+                                      color = revised_taxon,
+                                      shape = membership_status,
+                                      size = membership_status,
+                                      alpha = membership_status)) +
+  geom_point() +
+  geom_text(data = hyp_df[hyp_df$membership_status == "Outlier", ],
+            aes(label = specimen_id), size = 2.5, vjust = -1.2,
+            color = "grey30", inherit.aes = FALSE,
+            x = hyp_df$rank[hyp_df$membership_status == "Outlier"],
+            y = hyp_df$revised_taxon[hyp_df$membership_status == "Outlier"]) +
+  scale_color_brewer(palette = "Set1", guide = "none") +
+  scale_shape_manual(values = c("Core" = 19, "Borderline" = 17, "Outlier" = 4),
+                     name = "Tier") +
+  scale_size_manual(values = c("Core" = 4, "Borderline" = 3, "Outlier" = 2.5),
+                    name = "Tier") +
+  scale_alpha_manual(values = c("Core" = 1, "Borderline" = 0.7, "Outlier" = 0.45),
+                     name = "Tier") +
+  labs(title = "Confidence-Stratified Hypodigm",
+       subtitle = "Filled circle = Core | Triangle = Borderline | × = Incertae sedis",
+       x = "Specimens (ordered by silhouette width within taxon)",
+       y = NULL) +
+  theme_tax +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+# Print all taxonomy plots
+for (p in list(plot_taxonomy_map, plot_changes, plot_silhouette_portrait,
+               plot_trait_envelopes, plot_calibration, plot_hypodigm)) {
+  print(p)
+}
+
+# ================================================================
+# EXPORT
+# ================================================================
+# Save the master taxonomy table as a CSV for downstream use
+write.csv(taxonomy_table, "revised_taxonomy_table.csv", row.names = FALSE)
+write.csv(revision_table, "formal_revision_summary.csv", row.names = FALSE)
+cat("Exported: revised_taxonomy_table.csv\n")
+cat("Exported: formal_revision_summary.csv\n")
+
+cat("\n=== Taxonomy derivation complete ===\n")

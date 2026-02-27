@@ -22,9 +22,9 @@ set.seed(42)
 # SECTION 1: PHYLOGENY
 # ============================================================
 hominin_tree <- read.tree(
-  text = "(P_robustus:1.5,(P_afarensis:1.0,P_africanus:0.8):0.5);"
+  text = "(P_robustus:1.5,(A_afarensis:1.0,A_africanus:0.8):0.5);"
 )
-hominin_tree$tip.label <- c("A. robustus", "A. afarensis", "A. africanus")
+hominin_tree$tip.label <- c("P. robustus", "A. afarensis", "A. africanus")
 
 cat("=== Hominin Phylogeny ===\n")
 print(hominin_tree)
@@ -32,8 +32,7 @@ print(hominin_tree)
 # ============================================================
 # SECTION 2: SIMULATE CONTINUOUS TRAIT EVOLUTION (phytools)
 # ============================================================
-cont_trait_names <- c("M1_length", "M2_width", "cranial_capacity",
-                      "facial_prognathism", "palate_breadth")
+cont_trait_names <- c("M1_BL", "M1_MD", "M2_BL", "M2_MD", "P4_BL")
 n_cont <- length(cont_trait_names)
 
 species_means <- matrix(
