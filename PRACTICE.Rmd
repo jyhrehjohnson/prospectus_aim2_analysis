@@ -1,0 +1,116 @@
+---
+title: "Practice"
+author: "Jyhreh Johnson"
+date: "2026-02-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Install Packages 
+```{r}
+install.packages("MASS") #For multivariate normal data
+install.packages("cluster") #For Gower distance and clustering
+install.packages("ggplot2") #For plotting
+install.packages("viridis") #Color scales
+install.packages("lme4") #For hierarchical models
+```
+
+Load Packages
+```{r}
+library(MASS) #gives mvrnorm() for generating correlated data
+library(cluster) #gives daisy () for Gower and pam() for clustering
+library(ggplot2) #plots
+library(viridis) #Color pallete
+library(lme4) #gives lmer() for hierarchical models
+
+set.seed(2024) #Set random seed for reproducibility 
+```
+
+Create Folders to Save Work
+```{r}
+dir.create("practice data", showWarnings = FALSE)
+dir.create("practice results", showWarnings = FALSE)
+dir.create("practice figures", showWarnings = FALSE)
+```
+
+Define Correlation Matrix
+#Dental measurements are not independent. If M1 is large then M2 is also large.
+```{r}
+#Read this like you are reading a playcard in softball. Ex: M1_BL and M1MD have a correlation of 75%. Diagonal is perfect correlation with itself. 
+correlation_matrix <- matrix(c(
+  #M1_BL M1_MD M2_BL M2_MD P4_BL
+  1.00,  0.75, 0.65, 0.60, 0.55, #M1_BL row
+  0.75,  1.00, 0.60, 0.65, 0.60, #M1_MD row
+  0.65,  0.60, 1.00, 0.75, 0.55, #M2_BL row
+  0.60,  0.65, 0.75, 1.00, 0.60, #M2_MD row
+  0.55,  0.60, 0.55, 0.60, 1.00  #P4_BL row
+), nrow=5, ncol=5)
+
+rownames(correlation_matrix) <- c("M1_BL", "M1_MD", "M2_BL", "M2_MD", "P4_BL")
+colnames(correlation_matrix) <- c("M1_BL", "M1_MD", "M2_BL", "M2_MD", "P4_BL")
+
+print(correlation_matrix)
+```
+
+Set Species Parameters
+```{r}
+#Species A: Paranthropus - Large
+n_A <- 25 #sample size
+mean_A <- c(20, 18, 21, 19, 12) 
+names(mean_A) <- c("M1_BL", "M1_MD", "M2_BL", "M2_MD", "P4_BL")
+sd_A <- c(0.7, 0.6, 0.8, 0.7, 0.5) #standard deviations (variation within species)
+
+#Discrete trait probabilities
+#Cusp pattern: Y5-90%, Y4-8%, Plus 5-2%
+#Hypocone size: small-10%, medium,-10%, large-10%
+#Cingulum: absent-10%, weak-20%, strong-70%
+
+#Species B: Australopithecus - Intermediate
+n_B <- 25
+mean_B <- c(15, 14, 16, 15, 10)
+names(mean_B) <- c("M1_BL", "M1_MD", "M2_BL", "M2_MD", "P4_BL")
+sd_B <- c(0.6, 0.5, 0.7, 0.6, 0.5)
+
+#Species C: Homo - Small
+n_C <- 25
+mean_C <- c(12,11,13,12,8)
+names(mean_C) <- c("M1_BL", "M1_MD", "M2_BL", "M2_MD", "P4_BL")
+sd_C <- c(0.5, 0.4, 0.6, 0.5, 0.4)
+```
+
+Generate Species Data
+```{r}
+#Step 1: Convert correlation matrix into covariance matrix. Covariance = SD x Correlation x SD
+covariance_A <- diag(sd_A) %% correlation_matrix %% diag(sd_A)
+
+#Step 2: Generate correlated measurements. mvrnorm = multivariate normal random numbers
+continuous_A <- mvrnorm(n=n_A, mu = mean_A, Sigma = covariance_A)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
