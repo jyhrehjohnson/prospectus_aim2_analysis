@@ -1,0 +1,7 @@
+"cluster","n_specimens","n_core","medoid_id","assigned_name","plurality_pct","mean_sil","name_status"
+1,7,0,NA,"A. afarensis",42.9,0.029,"Requires review"
+2,4,0,NA,"P. robustus",100,0.412,"Confirmed"
+3,2,0,NA,"A. afarensis",50,0.267,"Requires review"
+4,11,0,NA,"A. afarensis",100,0.226,"Confirmed"
+5,3,0,NA,"A. africanus",100,0.429,"Confirmed"
+6,6,0,NA,"A. africanus",100,0.197,"Confirmed"

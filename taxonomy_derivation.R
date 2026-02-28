@@ -663,6 +663,98 @@ for (p in list(plot_taxonomy_map, plot_changes, plot_silhouette_portrait,
 }
 
 # ================================================================
+# DENDROGRAM — Hierarchical clustering on combined distance matrix
+# ================================================================
+
+# Convert hybrid dist object to hierarchical clustering
+# Ward.D2 minimises total within-cluster variance — most coherent
+# linkage for morphological distance matrices
+hc <- hclust(D_final, method = "ward.D2")
+
+# Label each leaf with specimen ID and revised taxon
+leaf_labels <- paste0(taxonomy_table$specimen_id, "\n",
+                      taxonomy_table$revised_taxon)
+hc$labels   <- leaf_labels
+
+# Colour vector: one colour per revised taxon, mapped to leaf order
+taxon_palette <- c("P. robustus"  = "#E74C3C",
+                   "A. afarensis" = "#3498DB",
+                   "A. africanus" = "#2ECC71")
+
+leaf_colours <- taxon_palette[taxonomy_table$revised_taxon][hc$order]
+
+# ── Plot using base R (always available, no extra packages) ──────
+plot_dendrogram_base <- function() {
+  par(mar = c(10, 4, 4, 2))
+  plot(hc,
+       main  = "Hierarchical Clustering — Combined Distance (Ward.D2)",
+       sub   = sprintf("alpha = %.2f  |  k = %s clusters selected by silhouette",
+                       best_alpha, combined_result$k_selected),
+       xlab  = "",
+       ylab  = "Combined distance",
+       cex   = 0.65,
+       hang  = -1)
+  
+  #Draw colored rectangles around the k selected clusters
+  rect.hclust(hc, k = combined_result$k_selected,
+              border = unname(taxon_palette))
+  
+  #Color the leaf labels to match taxon
+  labels_col <- leaf_colours
+  for (i in seq_along(hc$order)) {
+    mtext(hc$labels[hc$order[i]],
+          side  = 1,
+          at    = i,
+          las   = 2,
+          cex   = 0.55,
+          col   = leaf_colours[i],
+          line  = 0.5)
+  }
+}
+
+plot_dendrogram_base()
+
+# ── ggplot2 version using ggdendro ───────────────────────────────
+dend_data <- dendro_data(hc, type = "rectangle")
+
+#Map leaf labels back to taxon for coloring
+leaf_df <- dend_data$labels
+leaf_df$revised_taxon <- taxonomy_table$revised_taxon[
+  match(leaf_df$label, leaf_labels)
+]
+
+plot_dendrogram_gg <- ggplot() +
+  geom_segment(data = segment(dend_data),
+               aes(x = x, y = y, xend = xend, yend = yend),
+               colour = "grey40", linewidth = 0.4) +
+  geom_text(data = leaf_df,
+            aes(x = x, y = y - 0.01, label = label,
+                colour = revised_taxon),
+            angle = 90, hjust = 1, size = 2.4) +
+  geom_hline(yintercept = hc$height[length(hc$height) - combined_result$k_selected + 1],
+             linetype   = "dashed", colour = "black", linewidth = 0.6) +
+  annotate("text",
+           x     = 1,
+           y     = hc$height[length(hc$height) - combined_result$k_selected + 1] + 0.01,
+           label = sprintf("Cut → k = %d", combined_result$k_selected),
+           hjust = 0, size = 3.2, colour = "black") +
+  scale_colour_manual(values = taxon_palette, name = "Revised taxon") +
+  scale_y_continuous(expand = expansion(mult = c(0.25, 0.05))) +
+  labs(title    = "Hierarchical Clustering — Combined Distance (Ward.D2)",
+       subtitle = sprintf("Dashed line = cut height for k = %s  |  alpha = %.2f",
+                          combined_result$k_selected, best_alpha),
+       x = NULL, y = "Combined distance (Ward linkage)") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x  = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.grid   = element_blank(),
+        plot.title   = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, colour = "grey40"),
+        legend.position = "right")
+
+print(plot_dendrogram_gg)
+
+# ================================================================
 # EXPORT
 # ================================================================
 # Save the master taxonomy table as a CSV for downstream use
